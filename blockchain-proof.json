@@ -1,0 +1,86 @@
+{
+  "timestamp": "2025-07-25T09:03:19.783Z",
+  "totalTokens": 8,
+  "tokens": [
+    {
+      "mint": "ERuSWmgakbHgVx4q3pHQoi3wJZM1zdVv4nWQwWdCbonk",
+      "symbol": "MEOW CATS",
+      "name": "NFT by Meow Labs",
+      "firstSeen": "2025-07-25T09:02:22.196Z",
+      "priceSOL": 2.8881939887993522e-8,
+      "marketCap": 2795.765912194428,
+      "trades": 11,
+      "volume": 2.660919497
+    },
+    {
+      "mint": "63P1BYvbXCcMHXF2MZMmD1a1GpcFzTbmeZB67gkEbonk",
+      "symbol": "Ozzy",
+      "name": "Ozzy Osbourne",
+      "firstSeen": "2025-07-25T09:02:26.445Z",
+      "priceSOL": 2.8383691522329715e-8,
+      "marketCap": 2795.765912194428,
+      "trades": 4,
+      "volume": 4.413046872
+    },
+    {
+      "mint": "HjrG7dj71E1mz85WKqR5hto33qbBmpN2oEmYYjfcbonk",
+      "symbol": "RD",
+      "name": "Retardio Dogs",
+      "firstSeen": "2025-07-25T09:02:34.234Z",
+      "priceSOL": 2.885494188802287e-8,
+      "marketCap": 2867.730409381395,
+      "trades": 13,
+      "volume": 4.758384924
+    },
+    {
+      "mint": "EvFrrfFYwRf4QeX9i1Wr4cFS1FD9EUCA9i78tDQibonk",
+      "symbol": "cow",
+      "name": "currency if wealth",
+      "firstSeen": "2025-07-25T09:02:52.400Z",
+      "priceSOL": 2.774196717551207e-8,
+      "marketCap": 2795.7660880014414,
+      "trades": 13,
+      "volume": 4.7712748320000005
+    },
+    {
+      "mint": "CeWoSUbtN8qwz1dcCP3ynCTsdiUx3m4diauzCCKhbonk",
+      "symbol": "Fren",
+      "name": "Frens",
+      "firstSeen": "2025-07-25T09:02:55.014Z",
+      "priceSOL": 5.647307555417029e-8,
+      "marketCap": 5693.234614112318,
+      "trades": 65,
+      "volume": 27.451209477
+    },
+    {
+      "mint": "BdXWknYW9boZdExNXgA5MYgmRWRWPTuydtHHsAwCbonk",
+      "symbol": "SMCA",
+      "name": "Stick Man Crypto Army",
+      "firstSeen": "2025-07-25T09:02:56.821Z",
+      "priceSOL": 3.1601456818737196e-8,
+      "marketCap": 3199.959621987102,
+      "trades": 18,
+      "volume": 0.8983264960000001
+    },
+    {
+      "mint": "4K6KUX1LZ8dwbG9rmSnvGEQ4WbEGGFxo1Cn4hwUcbonk",
+      "symbol": "AI Act",
+      "name": "Artificial Intelligence Act",
+      "firstSeen": "2025-07-25T09:03:07.282Z",
+      "priceSOL": 2.9261498656749374e-8,
+      "marketCap": 2829.095752535178,
+      "trades": 7,
+      "volume": 4.193536397000001
+    },
+    {
+      "mint": "GThQthk6M8LJnkPk4aoVP3ZhhnxYKhjKdcREQvsqbonk",
+      "symbol": "BonkedPeng",
+      "name": "Bonked Penguru",
+      "firstSeen": "2025-07-25T09:03:19.500Z",
+      "priceSOL": 0.13362621544259407,
+      "marketCap": 13362.621544259406,
+      "trades": 0,
+      "volume": 0
+    }
+  ]
+}
