@@ -234,14 +234,16 @@ export class PriceTracker extends EventEmitter {
   }
 
   private startAnalysis(): void {
-    this.analysisTimer = setInterval(async () => {
-      try {
-        await this.performAnalysis();
-      } catch (error) {
-        logger.error('Price analysis failed', {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
+    this.analysisTimer = setInterval(() => {
+      void (async () => {
+        try {
+          await this.performAnalysis();
+        } catch (error) {
+          logger.error('Price analysis failed', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      })();
     }, this.analysisInterval);
   }
 
@@ -312,7 +314,7 @@ export class PriceTracker extends EventEmitter {
     await this.addPricePoint(pricePoint);
     
     // Check alerts
-    await this.checkAlerts(tokenData);
+    this.checkAlerts(tokenData);
     
     this.stats.pricePointsProcessed++;
     this.stats.lastUpdate = now;
@@ -343,7 +345,7 @@ export class PriceTracker extends EventEmitter {
     await this.influxClient.writePriceData(pricePoint);
   }
 
-  private async checkAlerts(tokenData: TokenData): Promise<void> {
+  private checkAlerts(tokenData: TokenData): void {
     const { mint, price, symbol } = tokenData;
     
     for (const [alertId, alert] of this.alerts.entries()) {
@@ -359,7 +361,7 @@ export class PriceTracker extends EventEmitter {
                      (alert.condition === 'below' && price <= alert.value);
           break;
           
-        case 'percentage':
+        case 'percentage': {
           const history = this.priceHistory.get(mint);
           if (history && history.length > 0) {
             const firstPrice = history[0];
@@ -371,6 +373,7 @@ export class PriceTracker extends EventEmitter {
             }
           }
           break;
+        }
       }
       
       if (triggered) {
@@ -1024,14 +1027,16 @@ export class PriceTracker extends EventEmitter {
       return;
     }
 
-    this.cleanupTimer = setInterval(async () => {
-      try {
-        await this.performCleanup();
-      } catch (error) {
-        logger.error('Token cleanup failed', {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
+    this.cleanupTimer = setInterval(() => {
+      void (async () => {
+        try {
+          await this.performCleanup();
+        } catch (error) {
+          logger.error('Token cleanup failed', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      })();
     }, TOKEN_CLEANUP_CONFIG.CLEANUP_INTERVAL_MS);
     
     logger.info('Token cleanup process started', {
@@ -1072,7 +1077,7 @@ export class PriceTracker extends EventEmitter {
 
     try {
       // Phase 1: Evaluate cleanup candidates (read-only)
-      const candidates = await this.evaluateCleanupCandidates();
+      const candidates = this.evaluateCleanupCandidates();
       transaction.candidatesCount = candidates.length;
       transaction.status = 'confirming';
 
@@ -1103,7 +1108,7 @@ export class PriceTracker extends EventEmitter {
     }
   }
 
-  private async evaluateCleanupCandidates(): Promise<CleanupReason[]> {
+  private evaluateCleanupCandidates(): CleanupReason[] {
     const candidates: CleanupReason[] = [];
     
     // Safety check: minimum tokens (with emergency override)
@@ -1462,7 +1467,7 @@ export class PriceTracker extends EventEmitter {
     });
   }
 
-  async stop(): Promise<void> {
+  stop(): void {
     if (this.analysisTimer) {
       clearInterval(this.analysisTimer);
       this.analysisTimer = null;

@@ -4,7 +4,7 @@
  */
 
 import { EventEmitter } from 'events';
-import { getMintOrigin, PlatformResult, Platform } from './platform-detection';
+import { getMintOrigin, Platform } from './platform-detection';
 import { logger } from './logger';
 
 interface RetryInfo {
@@ -112,7 +112,7 @@ export class PlatformDetectionBuffer extends EventEmitter {
   /**
    * Process tokens in the retry queue
    */
-  private async processRetryQueue(): Promise<void> {
+  private processRetryQueue(): void {
     if (this.retryQueue.size === 0) return;
     
     const now = Date.now();
@@ -131,7 +131,7 @@ export class PlatformDetectionBuffer extends EventEmitter {
       
       // Check if it's time for next retry
       if (retryInfo.attempts < this.maxRetries) {
-        const delay = this.retryDelays[retryInfo.attempts] || this.retryDelays[this.retryDelays.length - 1];
+        const delay = this.retryDelays[retryInfo.attempts] || this.retryDelays[this.retryDelays.length - 1] || 5000;
         
         if (now - retryInfo.lastAttempt >= delay) {
           toProcess.push(retryInfo);
@@ -298,5 +298,5 @@ export async function detectPlatformWithBuffer(mint: string): Promise<'pump.fun'
   const result = await buffer.detectWithBuffer(mint);
   
   // Convert 'unknown' to default platform
-  return result === 'unknown' ? 'pump.fun' : result as 'pump.fun' | 'letsbonk.fun';
+  return result === 'unknown' ? 'pump.fun' : result;
 }

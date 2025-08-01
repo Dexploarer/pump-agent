@@ -25,8 +25,6 @@ export class InfluxClient {
   private host: string;
   private database: string;
   private token: string;
-  private organization: string;
-
   constructor(
     config: {
       host: string;
@@ -34,13 +32,13 @@ export class InfluxClient {
       database: string;
       organization: string;
     },
-    batchSize: number = 100,
-    flushInterval: number = 5000
+    _batchSize: number = 100,
+    _flushInterval: number = 5000
   ) {
     this.host = config.host;
     this.database = config.database;
     this.token = config.token;
-    this.organization = config.organization;
+    // organization is accepted but not used in current implementation
     
     this.client = new InfluxDBClient({
       host: this.host,
@@ -85,10 +83,12 @@ export class InfluxClient {
   }
 
   private setupFlushTimer(): void {
-    this.flushTimer = setInterval(async () => {
-      if (this.writeBuffer.length > 0) {
-        await this.flush();
-      }
+    this.flushTimer = setInterval(() => {
+      void (async () => {
+        if (this.writeBuffer.length > 0) {
+          await this.flush();
+        }
+      })();
     }, DATABASE_CONFIG.FLUSH_INTERVAL);
   }
 
@@ -201,13 +201,13 @@ export class InfluxClient {
     for (const item of data) {
       if ('symbol' in item && 'name' in item) {
         // TokenData
-        await this.writeTokenData(item as TokenData);
+        await this.writeTokenData(item);
       } else if ('source' in item) {
         // PricePoint
-        await this.writePriceData(item as PricePoint);
+        await this.writePriceData(item);
       } else if ('type' in item && 'wallet' in item) {
         // TradeData
-        await this.writeTradeData(item as TradeData);
+        await this.writeTradeData(item);
       }
     }
   }
@@ -301,7 +301,7 @@ export class InfluxClient {
           mint: row['mint'] as string,
           symbol: row['symbol'] as string,
           name: row['name'] as string,
-          platform: row['platform'] as any,
+          platform: row['platform'],
           platformConfidence: row['platformConfidence'] as number,
           price: row['price'] as number,
           volume24h: row['volume24h'] as number,
@@ -507,8 +507,8 @@ export class InfluxClient {
         data.push({
           mint: row['mint'] as string,
           symbol: row['symbol'] as string,
-          platform: row['platform'] as any,
-          reason: row['reason'] as any,
+          platform: row['platform'],
+          reason: row['reason'],
           details: row['details'] as string,
           timestamp: new Date(row['time'] as string),
           finalPrice: row['final_price'] as number,

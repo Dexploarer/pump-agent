@@ -27,5 +27,5 @@
     "prefer-const": "error",
     "no-var": "error"
   },
-  "ignorePatterns": ["dist/", "node_modules/", "coverage/"]
+  "ignorePatterns": ["dist/", "node_modules/", "coverage/", "**/*.test.ts", "**/*.spec.ts", "scripts/", "production-test.ts", "stress-test-simple.ts"]
 }

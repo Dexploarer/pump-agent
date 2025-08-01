@@ -5,7 +5,6 @@
  */
 
 import { Connection, PublicKey } from '@solana/web3.js';
-import { getMint } from '@solana/spl-token';
 import { logger } from './logger';
 
 export type Platform = 'pump.fun' | 'letsbonk.fun' | 'unknown';
@@ -87,9 +86,6 @@ export async function getMintOrigin(mintStr: string): Promise<PlatformResult> {
     const conn = new Connection(RPC_ENDPOINT, "confirmed");
     const mintPub = new PublicKey(mintStr);
 
-    // Get mint account information
-    const mintInfo = await getMint(conn, mintPub);
-    
     // Get the first transaction to find the program ID
     const signatures = await conn.getSignaturesForAddress(mintPub, { limit: 1000 });
     
@@ -107,6 +103,18 @@ export async function getMintOrigin(mintStr: string): Promise<PlatformResult> {
 
     // Get the oldest (creation) transaction
     const oldestSignature = signatures[signatures.length - 1];
+    if (!oldestSignature) {
+      logger.warn('No oldest signature found', { mint: mintStr });
+      const result: PlatformResult = {
+        platform: 'unknown',
+        confidence: 0,
+        method: 'fallback',
+        timestamp: Date.now()
+      };
+      platformCache.set(mintStr, result);
+      return result;
+    }
+    
     const transaction = await conn.getParsedTransaction(oldestSignature.signature, {
       commitment: "confirmed"
     });

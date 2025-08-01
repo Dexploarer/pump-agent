@@ -280,7 +280,7 @@ class PumpAgent {
     logger.info('Initializing MCP server...');
     
     // Create MCP server with influx client and price tracker
-    this.mcpServer = await createMCPServer(this.influxClient, this.priceTracker);
+    this.mcpServer = createMCPServer(this.influxClient, this.priceTracker);
     
     // Start in a separate process/thread if needed
     if (this.config.NODE_ENV !== 'production') {
@@ -374,7 +374,7 @@ class PumpAgent {
 
     // Stop price tracker
     if (this.priceTracker) {
-      await this.priceTracker.stop();
+      this.priceTracker.stop();
     }
 
     // Stop MCP server

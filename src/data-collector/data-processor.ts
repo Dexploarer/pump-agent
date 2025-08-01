@@ -77,10 +77,12 @@ export class DataProcessor extends EventEmitter {
   }
 
   private setupFlushTimer(): void {
-    this.flushTimer = setInterval(async () => {
-      if (this.processingQueue.length > 0) {
-        await this.processQueue();
-      }
+    this.flushTimer = setInterval(() => {
+      void (async () => {
+        if (this.processingQueue.length > 0) {
+          await this.processQueue();
+        }
+      })();
       
       // Cleanup old dedup entries
       this.cleanupDedupCache();
@@ -133,8 +135,8 @@ export class DataProcessor extends EventEmitter {
       for (const message of messagesToProcess) {
         try {
           switch (message.type) {
-            case 'tokenUpdate':
-              const tokenData = await this.processTokenUpdate(message as TokenUpdateMessage);
+            case 'tokenUpdate': {
+              const tokenData = this.processTokenUpdate(message as TokenUpdateMessage);
               if (tokenData) {
                 tokenUpdates.push(tokenData);
                 
@@ -145,13 +147,15 @@ export class DataProcessor extends EventEmitter {
                 }
               }
               break;
+            }
 
-            case 'trade':
-              const tradeData = await this.processTradeMessage(message as TradeMessage);
+            case 'trade': {
+              const tradeData = this.processTradeMessage(message as TradeMessage);
               if (tradeData) {
                 trades.push(tradeData);
               }
               break;
+            }
 
             default:
               logger.debug('Skipping unknown message type', { type: message.type });
@@ -188,7 +192,7 @@ export class DataProcessor extends EventEmitter {
     }
   }
 
-  private async processTokenUpdate(message: TokenUpdateMessage): Promise<TokenData | null> {
+  private processTokenUpdate(message: TokenUpdateMessage): TokenData | null {
     const data = message.data;
 
     // Deduplication check
@@ -214,7 +218,7 @@ export class DataProcessor extends EventEmitter {
     return tokenData;
   }
 
-  private async processTradeMessage(message: TradeMessage): Promise<TradeData | null> {
+  private processTradeMessage(message: TradeMessage): TradeData | null {
     const data = message.data;
 
     // Validation

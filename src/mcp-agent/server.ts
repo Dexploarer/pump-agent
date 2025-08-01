@@ -391,7 +391,7 @@ export class MCPServer {
     };
   }
 
-  private async handleAddPriceAlert(args: Record<string, unknown>) {
+  private handleAddPriceAlert(args: Record<string, unknown>) {
     const { mint, symbol, alertType, condition, value } = args;
 
     if (!mint || !symbol || !alertType || !condition || value === undefined) {
@@ -421,7 +421,7 @@ export class MCPServer {
     };
   }
 
-  private async handleGetServerStats(_args: Record<string, unknown>) {
+  private handleGetServerStats(_args: Record<string, unknown>) {
     const trackerStats = this.config.priceTracker.getStats();
     const influxHealthy = this.config.influxClient.isHealthy();
     const bufferSize = this.config.influxClient.getBufferSize();
@@ -468,10 +468,10 @@ export class MCPServer {
 }
 
 // Factory function to create and configure MCP server
-export async function createMCPServer(
+export function createMCPServer(
   influxClient: InfluxClient,
   priceTracker: PriceTracker
-): Promise<MCPServer> {
+): MCPServer {
   const config: MCPServerConfig = {
     name: MCP_CONFIG.SERVER_NAME,
     version: MCP_CONFIG.SERVER_VERSION,

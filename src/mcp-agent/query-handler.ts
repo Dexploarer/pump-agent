@@ -9,8 +9,7 @@ import {
   TokenData, 
   QueryResponse, 
   PriceHistoryQuery,
-  VolumeAnalysisQuery,
-  AggregatedData
+  VolumeAnalysisQuery
 } from '../database/schema.js';
 import { Platform, PLATFORMS } from '../utils/constants.js';
 
