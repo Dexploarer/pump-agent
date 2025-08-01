@@ -12,7 +12,9 @@ import {
   QueryResponse,
   PriceHistoryQuery,
   VolumeAnalysisQuery,
-  AggregatedData
+  AggregatedData,
+  CleanupEvent,
+  CleanupMetrics
 } from './schema.js';
 
 export class InfluxClient {
@@ -133,6 +135,41 @@ export class InfluxClient {
     return point;
   }
 
+  private createCleanupEventPoint(event: CleanupEvent): Point {
+    const point = Point.measurement('cleanup_events');
+    point.setTag('mint', event.mint);
+    point.setTag('symbol', event.symbol);
+    point.setTag('platform', event.platform);
+    point.setTag('reason', event.reason);
+    point.setStringField('details', event.details);
+    point.setIntegerField('tracked_duration_ms', event.trackedDuration);
+    
+    if (event.finalPrice !== undefined) {
+      point.setFloatField('final_price', event.finalPrice);
+    }
+    if (event.finalVolume !== undefined) {
+      point.setFloatField('final_volume', event.finalVolume);
+    }
+    if (event.finalLiquidity !== undefined) {
+      point.setFloatField('final_liquidity', event.finalLiquidity);
+    }
+    if (event.peakPrice !== undefined) {
+      point.setFloatField('peak_price', event.peakPrice);
+    }
+    if (event.peakVolume !== undefined) {
+      point.setFloatField('peak_volume', event.peakVolume);
+    }
+    if (event.finalMarketCap !== undefined) {
+      point.setFloatField('final_market_cap', event.finalMarketCap);
+    }
+    if (event.totalTrades !== undefined) {
+      point.setIntegerField('total_trades', event.totalTrades);
+    }
+    
+    point.setTimestamp(event.timestamp);
+    return point;
+  }
+
   async writeTokenData(tokenData: TokenData): Promise<void> {
     const point = this.createTokenDataPoint(tokenData);
     this.writeBuffer.push(point);
@@ -173,6 +210,35 @@ export class InfluxClient {
         await this.writeTradeData(item as TradeData);
       }
     }
+  }
+
+  async writeCleanupEvent(event: CleanupEvent): Promise<void> {
+    const point = this.createCleanupEventPoint(event);
+    this.writeBuffer.push(point);
+    
+    // Immediately flush cleanup events for audit trail
+    await this.flush();
+  }
+
+  async writeCleanupMetrics(metrics: CleanupMetrics): Promise<void> {
+    const point = Point.measurement('cleanup_metrics');
+    point.setIntegerField('total_evaluated', metrics.totalEvaluated);
+    point.setIntegerField('rugged_detected', metrics.ruggedDetected);
+    point.setIntegerField('inactive_detected', metrics.inactiveDetected);
+    point.setIntegerField('low_volume_detected', metrics.lowVolumeDetected);
+    point.setIntegerField('actually_removed', metrics.actuallyRemoved);
+    point.setIntegerField('saved_by_whitelist', metrics.savedByWhitelist);
+    point.setIntegerField('saved_by_grace_period', metrics.savedByGracePeriod);
+    point.setIntegerField('saved_by_limit', metrics.savedByLimit);
+    point.setFloatField('execution_time_ms', metrics.executionTimeMs);
+    point.setTimestamp(new Date());
+    
+    if (metrics.memoryFreedBytes !== undefined) {
+      point.setIntegerField('memory_freed_bytes', metrics.memoryFreedBytes);
+    }
+    
+    this.writeBuffer.push(point);
+    await this.flush();
   }
 
   private async flush(): Promise<void> {
@@ -397,6 +463,83 @@ export class InfluxClient {
         count: 0,
         timestamp: new Date(),
         query: query as unknown as Record<string, unknown>,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  async queryCleanupEvents(
+    mint?: string,
+    reason?: 'rugged' | 'inactive' | 'low_volume',
+    platform?: string,
+    timeRange?: { start: Date; end: Date },
+    limit = 1000
+  ): Promise<QueryResponse<CleanupEvent>> {
+    try {
+      let query = `
+        SELECT * FROM cleanup_events
+        WHERE time >= now() - interval '7 days'
+      `;
+
+      if (mint) {
+        query += ` AND mint = '${mint}'`;
+      }
+      
+      if (reason) {
+        query += ` AND reason = '${reason}'`;
+      }
+      
+      if (platform) {
+        query += ` AND platform = '${platform}'`;
+      }
+      
+      if (timeRange) {
+        query += ` AND time >= '${timeRange.start.toISOString()}'`;
+        query += ` AND time <= '${timeRange.end.toISOString()}'`;
+      }
+      
+      query += ` ORDER BY time DESC LIMIT ${limit}`;
+
+      const result = await this.client.query(query, this.database);
+      const data: CleanupEvent[] = [];
+      
+      for await (const row of result) {
+        data.push({
+          mint: row['mint'] as string,
+          symbol: row['symbol'] as string,
+          platform: row['platform'] as any,
+          reason: row['reason'] as any,
+          details: row['details'] as string,
+          timestamp: new Date(row['time'] as string),
+          finalPrice: row['final_price'] as number,
+          finalVolume: row['final_volume'] as number,
+          finalLiquidity: row['final_liquidity'] as number,
+          peakPrice: row['peak_price'] as number,
+          peakVolume: row['peak_volume'] as number,
+          trackedDuration: row['tracked_duration_ms'] as number,
+          finalMarketCap: row['final_market_cap'] as number,
+          totalTrades: row['total_trades'] as number,
+        });
+      }
+
+      return {
+        success: true,
+        data,
+        count: data.length,
+        timestamp: new Date(),
+        query: { mint, reason, platform, limit },
+      };
+    } catch (error) {
+      logger.error('Failed to query cleanup events', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      
+      return {
+        success: false,
+        data: [],
+        count: 0,
+        timestamp: new Date(),
+        query: { mint, reason, platform, limit },
         error: error instanceof Error ? error.message : String(error),
       };
     }

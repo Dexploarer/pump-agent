@@ -249,3 +249,44 @@ export const TRADE_DATA_REQUIRED_FIELDS = [
 
 export type TokenDataRequiredField = typeof TOKEN_DATA_REQUIRED_FIELDS[number];
 export type TradeDataRequiredField = typeof TRADE_DATA_REQUIRED_FIELDS[number];
+
+// Cleanup event for audit trail
+export interface CleanupEvent {
+  mint: string;
+  symbol: string;
+  platform: Platform;
+  reason: 'rugged' | 'inactive' | 'low_volume';
+  details: string;
+  timestamp: Date;
+  finalPrice?: number;
+  finalVolume?: number;
+  finalLiquidity?: number;
+  peakPrice?: number;
+  peakVolume?: number;
+  trackedDuration: number; // milliseconds
+  finalMarketCap?: number;
+  totalTrades?: number;
+}
+
+// Cleanup metrics for reporting
+export interface CleanupMetrics {
+  totalEvaluated: number;
+  ruggedDetected: number;
+  inactiveDetected: number;
+  lowVolumeDetected: number;
+  actuallyRemoved: number;
+  savedByWhitelist: number;
+  savedByGracePeriod: number;
+  savedByLimit: number;
+  executionTimeMs: number;
+  memoryFreedBytes?: number;
+}
+
+// Query response types
+export interface QueryResponse<T> {
+  data: T[];
+  metadata?: {
+    totalCount?: number;
+    executionTime?: number;
+  };
+}
