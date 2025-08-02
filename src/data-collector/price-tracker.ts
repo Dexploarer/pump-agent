@@ -4,7 +4,7 @@
 
 import { EventEmitter } from 'events';
 import { logger } from '../utils/logger.js';
-import { InfluxClient } from '../database/influx-client.js';
+import { SQLiteClient } from '../database/sqlite-client.js';
 import { 
   TokenData, 
   PricePoint, 
@@ -118,7 +118,7 @@ export class PriceTracker extends EventEmitter {
   private newTokensIndex = new Set<string>(); // Tokens in grace period
 
   constructor(
-    private influxClient: InfluxClient,
+    private sqliteClient: SQLiteClient,
     private analysisInterval = 60000 // 1 minute
   ) {
     super();
@@ -344,7 +344,7 @@ export class PriceTracker extends EventEmitter {
     this.priceHistory.set(mint, history);
     
     // Write to database
-    await this.influxClient.writePriceData(pricePoint);
+    await this.sqliteClient.writePriceData(pricePoint);
   }
 
   private checkAlerts(tokenData: TokenData): void {
@@ -473,27 +473,20 @@ export class PriceTracker extends EventEmitter {
     const startTime = new Date(now.getTime() - intervals[timeframe]);
     
     try {
-      const query: PriceHistoryQuery = {
-        mint,
-        timeRange: { start: startTime, end: now },
-        interval: timeframe === '1h' ? '5m' : timeframe === '24h' ? '1h' : '4h',
-        aggregation: 'mean',
-      };
+      const pricePoints = await this.sqliteClient.getPriceHistory(mint, { start: startTime, end: now }, timeframe);
       
-      const result = await this.influxClient.getPriceHistory(query);
-      
-      if (!result.success || result.data.length < 2) {
+      if (pricePoints.length < 2) {
         return null;
       }
       
-      const points = result.data.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+      const points = pricePoints.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
       const firstPoint = points[0];
       const lastPoint = points[points.length - 1];
       if (!firstPoint || !lastPoint) {
         return null;
       }
-      const startPrice = firstPoint.value;
-      const endPrice = lastPoint.value;
+      const startPrice = firstPoint.price;
+      const endPrice = lastPoint.price;
       const change = endPrice - startPrice;
       const changePercent = (change / startPrice) * 100;
       
@@ -503,7 +496,7 @@ export class PriceTracker extends EventEmitter {
       const confidence = this.calculateConfidence(points);
       
       // Calculate volume
-      const totalVolume = points.reduce((sum, point) => sum + (point.count || 0), 0);
+      const totalVolume = points.reduce((sum, point) => sum + point.volume, 0);
       
       return {
         mint,
@@ -539,13 +532,13 @@ export class PriceTracker extends EventEmitter {
     return 'sideways';
   }
 
-  private getTrendStrength(changePercent: number, points: AggregatedData[]): 'weak' | 'moderate' | 'strong' {
+  private getTrendStrength(changePercent: number, points: PricePoint[]): 'weak' | 'moderate' | 'strong' {
     const absChange = Math.abs(changePercent);
     
     // Calculate volatility
     if (points.length < 3) return 'weak';
     
-    const prices = points.map(p => p.value);
+    const prices = points.map(p => p.price);
     const volatility = this.calculateVolatility(prices);
     
     // Strong trends have high change with low volatility
@@ -572,10 +565,10 @@ export class PriceTracker extends EventEmitter {
     return Math.sqrt(variance);
   }
 
-  private calculateConfidence(points: AggregatedData[]): number {
+  private calculateConfidence(points: PricePoint[]): number {
     // Confidence based on data points and consistency
     const dataPointScore = Math.min(points.length / 20, 1); // Max 1.0 for 20+ points
-    const volumeScore = points.every(p => p.count > 0) ? 1 : 0.5;
+    const volumeScore = points.every(p => p.volume > 0) ? 1 : 0.5;
     
     return (dataPointScore + volumeScore) / 2;
   }
@@ -739,41 +732,16 @@ export class PriceTracker extends EventEmitter {
       marketCap: tokenData.marketCap,
     });
 
+    // TODO: Implement cleanup history query for SQLite
     // Check if this token was previously cleaned up
     try {
-      const cleanupHistory = await this.influxClient.queryCleanupEvents(mint, undefined, undefined, {
-        start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // Last 7 days
-        end: new Date(),
-      }, 5);
-
-      if (cleanupHistory.success && cleanupHistory.data.length > 0) {
-        const lastCleanup = cleanupHistory.data[0];
-        if (lastCleanup) {
-          logger.info('Token was previously cleaned up, re-tracking', {
-            mint,
-            lastCleanupReason: lastCleanup.reason,
-            lastCleanupTime: lastCleanup.timestamp,
-            daysSinceCleanup: Math.floor((Date.now() - lastCleanup.timestamp.getTime()) / (24 * 60 * 60 * 1000)),
-          });
-
-          // Log re-tracking event for audit trail
-          const retrackEvent: CleanupEvent = {
-            mint: tokenData.mint,
-            symbol: tokenData.symbol,
-            platform: tokenData.platform,
-            reason: 'inactive', // Using existing enum, details explain it's re-tracking
-            details: `Re-tracked after recovery. Previous cleanup: ${lastCleanup.reason}. Reason: ${reason || 'manual_request'}`,
-            timestamp: new Date(),
-            finalPrice: tokenData.price,
-            finalVolume: tokenData.volume24h,
-            finalLiquidity: tokenData.liquidity,
-            finalMarketCap: tokenData.marketCap,
-            trackedDuration: 0, // Just re-tracked
-          };
-
-          await this.influxClient.writeCleanupEvent(retrackEvent);
-        }
-      }
+      // const cleanupHistory = await this.sqliteClient.queryCleanupEvents(mint, undefined, undefined, {
+      //   start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // Last 7 days
+      //   end: new Date(),
+      // }, 5);
+      
+      // For now, skip cleanup history check until SQLite implementation is complete
+      logger.info('Skipping cleanup history check for re-tracking (SQLite implementation pending)', { mint });
     } catch (error) {
       logger.error('Failed to check cleanup history for re-tracking', {
         mint,
@@ -797,17 +765,21 @@ export class PriceTracker extends EventEmitter {
 
   async evaluateTokenForRetracking(mint: string): Promise<{ shouldRetrack: boolean; reason?: string }> {
     try {
+      // TODO: Implement cleanup events query for SQLite
       // Query recent cleanup events for this token
-      const cleanupHistory = await this.influxClient.queryCleanupEvents(mint, undefined, undefined, {
-        start: new Date(Date.now() - 24 * 60 * 60 * 1000), // Last 24 hours
-        end: new Date(),
-      }, 1);
+      // const cleanupHistory = await this.sqliteClient.queryCleanupEvents(mint, undefined, undefined, {
+      //   start: new Date(Date.now() - 24 * 60 * 60 * 1000), // Last 24 hours
+      //   end: new Date(),
+      // }, 1);
 
-      if (!cleanupHistory.success || cleanupHistory.data.length === 0) {
-        return { shouldRetrack: false, reason: 'No recent cleanup found' };
-      }
+      // For now, assume no recent cleanup found until SQLite implementation is complete
+      return { shouldRetrack: false, reason: 'Cleanup events not yet implemented in SQLite' };
+      
+      // if (!cleanupHistory.success || cleanupHistory.data.length === 0) {
+      //   return { shouldRetrack: false, reason: 'No recent cleanup found' };
+      // }
 
-      const lastCleanup = cleanupHistory.data[0];
+      // const lastCleanup = cleanupHistory.data[0];
       if (!lastCleanup) {
         return { shouldRetrack: false, reason: 'No cleanup data found' };
       }
@@ -1273,7 +1245,8 @@ export class PriceTracker extends EventEmitter {
     // Log metrics to database
     if (metrics.totalEvaluated > 0) {
       try {
-        await this.influxClient.writeCleanupMetrics(metrics);
+        // TODO: Implement cleanup metrics writing for SQLite
+      // await this.sqliteClient.writeCleanupMetrics(metrics);
       } catch (error) {
         logger.error('Failed to write cleanup metrics', {
           error: error instanceof Error ? error.message : String(error),
@@ -1416,7 +1389,8 @@ export class PriceTracker extends EventEmitter {
       
       // Log to database for audit trail
       try {
-        await this.influxClient.writeCleanupEvent(cleanupEvent);
+        // TODO: Implement cleanup event writing for SQLite
+      // await this.sqliteClient.writeCleanupEvent(cleanupEvent);
         logger.debug('Cleanup event logged to database', { mint });
       } catch (error) {
         logger.error('Failed to log cleanup event', {

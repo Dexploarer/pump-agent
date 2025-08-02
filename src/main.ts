@@ -3,7 +3,7 @@ import { SimplePumpPortalClient } from './data-collector/simple-websocket-client
 import { TokenData, TradeData, AlertEventData, TrendEventData, CleanupEventData } from './database/schema.js';
 import { DataProcessor } from './data-collector/data-processor.js';
 import { PriceTracker, TrackingStats } from './data-collector/price-tracker.js';
-import { InfluxClient } from './database/influx-client.js';
+import { SQLiteClient } from './database/sqlite-client.js';
 import { MCPServer, createMCPServer } from './mcp-agent/server.js';
 
 import { log } from './utils/winston-logger.js';
@@ -22,11 +22,12 @@ dotenv.config({ path: join(__dirname, '../config/.env') });
 
 class PumpAgent {
   private config: ReturnType<typeof getEnvironmentConfig>;
-  private influxClient!: InfluxClient;
+  private sqliteClient!: SQLiteClient;
   private pumpPortalClient!: SimplePumpPortalClient;
   private dataProcessor!: DataProcessor;
   private priceTracker!: PriceTracker;
   private mcpServer!: MCPServer;
+  private uiServer!: any; // UIServer type will be imported dynamically
   private isShuttingDown = false;
 
   constructor() {
@@ -81,8 +82,8 @@ class PumpAgent {
       // Initialize MCP server
       await this.initializeMCPServer();
 
-      // Initialize and start UI server (disabled for now to focus on data collection)
-      // await this.initializeUIServer();
+      // Initialize and start UI server
+      await this.initializeUIServer();
 
       log.info('Pump Agent started successfully');
       
@@ -103,11 +104,11 @@ class PumpAgent {
     }
     
     // Initialize price tracker
-    this.priceTracker = new PriceTracker(this.influxClient);
+    this.priceTracker = new PriceTracker(this.sqliteClient);
     
     // Initialize data processor with database write configuration
-    const enableDatabaseWrites = this.influxClient.isHealthy();
-    this.dataProcessor = new DataProcessor(this.influxClient, {
+    const enableDatabaseWrites = this.sqliteClient?.isHealthy ?? false;
+    this.dataProcessor = new DataProcessor(this.sqliteClient, {
       enableDatabaseWrites,
       enableValidation: true,
       batchSize: 100,
@@ -116,7 +117,7 @@ class PumpAgent {
     });
     
     if (!enableDatabaseWrites) {
-      log.warn('Database writes disabled due to InfluxDB connection failure');
+      log.warn('Database writes disabled due to SQLite connection failure');
     }
     
     // Initialize PumpPortal client (don't fail if unavailable)
@@ -128,27 +129,16 @@ class PumpAgent {
   }
 
   private async initializeDatabase(): Promise<void> {
-    log.info('Initializing InfluxDB connection...');
+    log.info('Initializing SQLite database...');
     
-    this.influxClient = new InfluxClient(
-      {
-        host: this.config.INFLUXDB_HOST,
-        token: this.config.INFLUXDB_TOKEN,
-        database: this.config.INFLUXDB_DATABASE,
-        organization: this.config.INFLUXDB_ORGANIZATION,
-      },
-      this.config.BATCH_SIZE,
-      this.config.WRITE_INTERVAL_MS
-    );
+    this.sqliteClient = new SQLiteClient({
+      databasePath: './data/pump-agent.db',
+      enableWAL: true,
+      maxRetries: 3,
+      retryDelay: 1000,
+    });
 
-    // Test connection
-    try {
-      await this.influxClient.connect();
-    } catch (error) {
-      log.warn('InfluxDB connection failed, continuing without database', { error });
-    }
-
-    log.info('InfluxDB connection established');
+    log.info('SQLite database initialized');
   }
 
   private async initializePumpPortalClient(): Promise<void> {
@@ -355,7 +345,7 @@ class PumpAgent {
     log.info('Initializing MCP server...');
     
     // Create MCP server with influx client and price tracker
-    this.mcpServer = createMCPServer(this.influxClient, this.priceTracker);
+    this.mcpServer = createMCPServer(this.sqliteClient, this.priceTracker);
     
     // Start in a separate process/thread if needed
     if (this.config.NODE_ENV !== 'production') {
@@ -365,6 +355,20 @@ class PumpAgent {
     } else {
       // In production, might want to fork or use a separate process
       log.info('MCP server configured (start separately in production)');
+    }
+  }
+
+  private async initializeUIServer(): Promise<void> {
+    log.info('Initializing UI server...');
+    
+    try {
+      const { UIServer } = await import('./ui/server.js');
+      this.uiServer = new UIServer();
+      await this.uiServer.start(3001);
+      log.info('UI server started on port 3001');
+    } catch (error) {
+      log.error('Failed to initialize UI server', { error });
+      // Don't throw, continue without UI server
     }
   }
 
@@ -386,7 +390,7 @@ class PumpAgent {
       const processorStats = this.dataProcessor.getStats();
       const trackerStats = this.priceTracker.getStats();
       const isConnected = this.pumpPortalClient.isConnected();
-      const bufferSize = this.influxClient.getBufferSize();
+      const bufferSize = 0; // SQLite doesn't use a buffer like InfluxDB
       const subscribedTokens = this.pumpPortalClient.getSubscribedTokens();
       
       log.info('📈 System stats', {
@@ -473,8 +477,8 @@ class PumpAgent {
 
 
     // Close database connection
-    if (this.influxClient) {
-      await this.influxClient.close();
+    if (this.sqliteClient) {
+      await this.sqliteClient.close();
     }
 
     log.info('Pump Agent stopped');

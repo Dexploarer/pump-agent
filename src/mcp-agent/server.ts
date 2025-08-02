@@ -11,7 +11,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { logger } from '../utils/logger.js';
-import { InfluxClient } from '../database/influx-client.js';
+import { SQLiteClient } from '../database/sqlite-client.js';
 import { PriceTracker } from '../data-collector/price-tracker.js';
 import { QueryHandler } from './query-handler.js';
 import { MCP_CONFIG } from '../utils/constants.js';
@@ -19,7 +19,7 @@ import { MCP_CONFIG } from '../utils/constants.js';
 interface MCPServerConfig {
   name: string;
   version: string;
-  influxClient: InfluxClient;
+  sqliteClient: SQLiteClient;
   priceTracker: PriceTracker;
 }
 
@@ -35,7 +35,7 @@ export class MCPServer {
       }
     );
 
-    this.queryHandler = new QueryHandler(config.influxClient, config.priceTracker);
+    this.queryHandler = new QueryHandler(config.sqliteClient, config.priceTracker);
     this.setupTools();
     this.setupErrorHandling();
   }
@@ -431,8 +431,8 @@ export class MCPServer {
 
   private handleGetServerStats(_args: Record<string, unknown>) {
     const trackerStats = this.config.priceTracker.getStats();
-    const influxHealthy = this.config.influxClient.isHealthy();
-    const bufferSize = this.config.influxClient.getBufferSize();
+    const sqliteHealthy = this.config.sqliteClient.isHealthy;
+    const bufferSize = 0; // SQLite doesn't use a buffer like InfluxDB
 
     const stats = {
       server: {
@@ -442,7 +442,7 @@ export class MCPServer {
         memory: process.memoryUsage(),
       },
       database: {
-        healthy: influxHealthy,
+        healthy: sqliteHealthy,
         bufferSize,
       },
       priceTracker: trackerStats,
@@ -477,13 +477,13 @@ export class MCPServer {
 
 // Factory function to create and configure MCP server
 export function createMCPServer(
-  influxClient: InfluxClient,
+  sqliteClient: SQLiteClient,
   priceTracker: PriceTracker
 ): MCPServer {
   const config: MCPServerConfig = {
     name: MCP_CONFIG.SERVER_NAME,
     version: MCP_CONFIG.SERVER_VERSION,
-    influxClient,
+    sqliteClient,
     priceTracker,
   };
 

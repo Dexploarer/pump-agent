@@ -3,7 +3,7 @@
  */
 
 import { logger } from '../utils/logger.js';
-import { InfluxClient } from '../database/influx-client.js';
+import { SQLiteClient } from '../database/sqlite-client.js';
 import { PriceTracker } from '../data-collector/price-tracker.js';
 import { 
   TokenData, 
@@ -40,7 +40,7 @@ interface QueryResult {
 
 export class QueryHandler {
   constructor(
-    private influxClient: InfluxClient,
+    private sqliteClient: SQLiteClient,
     private priceTracker: PriceTracker
   ) {}
 
@@ -437,7 +437,7 @@ export class QueryHandler {
       aggregation: 'mean',
     };
     
-    const result = await this.influxClient.getPriceHistory(query);
+    const result = await this.sqliteClient.getPriceHistory(query.mint, query.timeRange, query.interval);
     
     return {
       success: result.success,
@@ -464,7 +464,8 @@ export class QueryHandler {
       topN: context.limit,
     };
     
-    const result = await this.influxClient.getVolumeAnalysis(query);
+    // SQLite doesn't have a dedicated volume analysis method, so we'll use price history
+    const result = await this.sqliteClient.getPriceHistory(query.mint, query.timeRange, query.interval);
     
     return {
       success: result.success,
@@ -539,7 +540,7 @@ export class QueryHandler {
 
   // Helper methods
   private async queryTokens(filters: Record<string, unknown>): Promise<QueryResponse<TokenData>> {
-    return await this.influxClient.queryTokenData(
+    return await this.sqliteClient.getRecentTokens(
       undefined, // mint
       filters['platform'] as string,
       filters['timeRange'] as { start: Date; end: Date },
@@ -548,7 +549,7 @@ export class QueryHandler {
   }
 
   private async findMintBySymbol(symbol: string): Promise<string | null> {
-    const result = await this.influxClient.queryTokenData();
+    const result = await this.sqliteClient.getRecentTokens();
     
     if (!result.success) {
       return null;

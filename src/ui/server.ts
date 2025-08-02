@@ -3,7 +3,7 @@ import { createServer, Server as HttpServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import path from 'path';
 import open from 'open';
-import { InfluxClient } from '../database/influx-client.js';
+import { SQLiteClient } from '../database/sqlite-client.js';
 import { log, getRecentLogs } from '../utils/winston-logger.js';
 import { getEnvironmentConfig } from '../utils/validators.js';
 
@@ -11,11 +11,8 @@ export class UIServer {
   private app: Application;
   private server: HttpServer;
   private io: SocketIOServer;
-  private influxClient: InfluxClient;
-  private config: ReturnType<typeof getEnvironmentConfig>;
-
+  private sqliteClient: SQLiteClient;
   constructor() {
-    this.config = getEnvironmentConfig();
     this.app = express();
     this.server = createServer(this.app);
     this.io = new SocketIOServer(this.server, {
@@ -25,17 +22,13 @@ export class UIServer {
       }
     });
 
-    // Initialize InfluxDB client
-    this.influxClient = new InfluxClient(
-      {
-        host: this.config.INFLUXDB_HOST,
-        token: this.config.INFLUXDB_TOKEN,
-        database: this.config.INFLUXDB_DATABASE,
-        organization: this.config.INFLUXDB_ORGANIZATION,
-      },
-      this.config.BATCH_SIZE,
-      this.config.WRITE_INTERVAL_MS
-    );
+    // Initialize SQLite client
+    this.sqliteClient = new SQLiteClient({
+      databasePath: './data/pump-agent.db',
+      enableWAL: true,
+      maxRetries: 3,
+      retryDelay: 1000,
+    });
 
     this.setupRoutes();
     this.setupSocketIO();
@@ -87,8 +80,8 @@ export class UIServer {
         platform: process.platform,
         nodeVersion: process.version,
         database: {
-          connected: this.influxClient.isHealthy(),
-          host: this.config.INFLUXDB_HOST,
+          connected: this.sqliteClient.isHealthy,
+          databasePath: './data/pump-agent.db',
         }
       };
       res.json(status);
@@ -101,7 +94,7 @@ export class UIServer {
   private async getTokens(req: express.Request, res: express.Response): Promise<void> {
     try {
       const limit = parseInt(req.query['limit'] as string) || 50;
-      const tokens = await this.influxClient.queryTokenData(undefined, undefined, undefined, limit);
+      const tokens = await this.sqliteClient.getRecentTokens(limit);
       res.json(tokens);
     } catch (error) {
       log.error('Failed to get tokens', { error });
@@ -109,15 +102,9 @@ export class UIServer {
     }
   }
 
-  private getStats(_req: express.Request, res: express.Response): void {
+  private async getStats(_req: express.Request, res: express.Response): Promise<void> {
     try {
-      // For now, return basic stats since getAggregatedData doesn't exist
-      const stats = {
-        totalTokens: 0,
-        totalVolume: 0,
-        avgPrice: 0,
-        timestamp: new Date().toISOString()
-      };
+      const stats = await this.sqliteClient.getTokenStats();
       res.json(stats);
     } catch (error) {
       log.error('Failed to get stats', { error });
@@ -125,11 +112,10 @@ export class UIServer {
     }
   }
 
-  private getRecentTrades(_req: express.Request, res: express.Response): void {
+  private async getRecentTrades(_req: express.Request, res: express.Response): Promise<void> {
     try {
-      // For now, return empty array since getRecentTrades doesn't exist
-      // TODO: Implement actual recent trades functionality
-      const trades: unknown[] = [];
+      const limit = parseInt(_req.query['limit'] as string) || 50;
+      const trades = await this.sqliteClient.getRecentTrades(limit);
       res.json(trades);
     } catch (error) {
       log.error('Failed to get recent trades', { error });
@@ -137,15 +123,15 @@ export class UIServer {
     }
   }
 
-  private getPlatformStats(_req: express.Request, res: express.Response): void {
+  private async getPlatformStats(_req: express.Request, res: express.Response): Promise<void> {
     try {
-      // For now, return basic platform stats
-      const stats = {
-        'pump.fun': 0,
-        'letsbonk.fun': 0,
-        'bonkake.fun': 0
+      const stats = await this.sqliteClient.getTokenStats();
+      const platformStats = {
+        'pump.fun': stats.tokensByPlatform['pump.fun'] || 0,
+        'letsbonk.fun': stats.tokensByPlatform['letsbonk.fun'] || 0,
+        'bonkake.fun': stats.tokensByPlatform['bonkake.fun'] || 0
       };
-      res.json(stats);
+      res.json(platformStats);
     } catch (error) {
       log.error('Failed to get platform stats', { error });
       res.status(500).json({ error: 'Failed to get platform stats' });
@@ -174,8 +160,8 @@ export class UIServer {
           },
           {
             timestamp: new Date(Date.now() - 10000).toISOString(),
-            level: 'WARN',
-            message: 'InfluxDB connection failed, continuing without database'
+            level: 'INFO',
+            message: 'SQLite database connected successfully'
           },
           {
             timestamp: new Date(Date.now() - 15000).toISOString(),
@@ -201,20 +187,26 @@ export class UIServer {
 
   private async broadcastUpdates(): Promise<void> {
     try {
-      const tokens = await this.influxClient.queryTokenData(undefined, undefined, undefined, 10);
+      const [tokens, trades, tokenStats] = await Promise.all([
+        this.sqliteClient.getRecentTokens(10),
+        this.sqliteClient.getRecentTrades(10),
+        this.sqliteClient.getTokenStats()
+      ]);
+
       const stats = {
-        totalTokens: tokens.data.length,
-        totalVolume: 0,
-        avgPrice: 0,
-        timestamp: new Date().toISOString()
+        totalTokens: tokenStats.totalTokens,
+        totalVolume: 0, // Will be calculated from trades
+        avgPrice: 0, // Will be calculated from tokens
+        timestamp: new Date().toISOString(),
+        tokensByPlatform: tokenStats.tokensByPlatform,
+        recentActivity: tokenStats.recentActivity
       };
-      const recentTrades: unknown[] = [];
 
       this.io.to('updates').emit('data-update', {
         timestamp: new Date().toISOString(),
-        tokens: tokens.data,
+        tokens: tokens,
         stats,
-        recentTrades
+        recentTrades: trades
       });
     } catch (error) {
       log.error('Failed to broadcast updates', { error });
@@ -223,13 +215,8 @@ export class UIServer {
 
   public async start(port: number = 3001): Promise<void> {
     try {
-      // Try to connect to InfluxDB, but don't fail if it's not available
-      try {
-        await this.influxClient.connect();
-        log.info('Connected to InfluxDB');
-      } catch (error) {
-        log.warn('InfluxDB not available, UI will work without database', { error });
-      }
+      // SQLite is already initialized in constructor, no connection needed
+      log.info('SQLite database ready');
       
       this.server.listen(port, () => {
         log.info(`UI Server started on port ${port}`, { port });
@@ -284,7 +271,7 @@ export class UIServer {
   public async stop(): Promise<void> {
     try {
       this.server.close();
-      await this.influxClient.disconnect();
+      await this.sqliteClient.close();
       log.info('UI Server stopped');
     } catch (error) {
       log.error('Failed to stop UI server', { error });

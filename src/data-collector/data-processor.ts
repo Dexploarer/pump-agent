@@ -10,7 +10,7 @@ import {
   validatePrice, 
   validateVolume 
 } from '../utils/validators.js';
-import { InfluxClient } from '../database/influx-client.js';
+import { SQLiteClient } from '../database/sqlite-client.js';
 import { 
   TokenData, 
   PricePoint, 
@@ -48,7 +48,7 @@ export class DataProcessor extends EventEmitter {
   private isProcessing = false;
 
   constructor(
-    private influxClient: InfluxClient,
+    private sqliteClient: SQLiteClient,
     config: Partial<ProcessingConfig> = {}
   ) {
     super();
@@ -345,7 +345,7 @@ export class DataProcessor extends EventEmitter {
       // Write token updates
       for (const tokenData of tokenUpdates) {
         writePromises.push(
-          this.influxClient.writeTokenData(tokenData).catch(error => {
+          this.sqliteClient.writeTokenData(tokenData).catch(error => {
             logger.warn('Failed to write token data', { 
               mint: tokenData.mint, 
               error: error instanceof Error ? error.message : String(error) 
@@ -357,7 +357,7 @@ export class DataProcessor extends EventEmitter {
       // Write trades
       for (const tradeData of trades) {
         writePromises.push(
-          this.influxClient.writeTradeData(tradeData).catch(error => {
+          this.sqliteClient.writeTradeData(tradeData).catch(error => {
             logger.warn('Failed to write trade data', { 
               mint: tradeData.mint, 
               error: error instanceof Error ? error.message : String(error) 
@@ -369,7 +369,7 @@ export class DataProcessor extends EventEmitter {
       // Write price points
       for (const pricePoint of pricePoints) {
         writePromises.push(
-          this.influxClient.writePriceData(pricePoint).catch(error => {
+          this.sqliteClient.writePriceData(pricePoint).catch(error => {
             logger.warn('Failed to write price data', { 
               mint: pricePoint.mint, 
               error: error instanceof Error ? error.message : String(error) 

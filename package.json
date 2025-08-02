@@ -5,24 +5,19 @@
   "description": "Real-time cryptocurrency data collection and AI query platform for pump.fun tokens",
   "main": "dist/main.js",
   "scripts": {
-    "dev": "bun --watch src/main.ts",
-    "dev:mock": "bun --watch src/main-dev.ts",
-    "build": "bun build src/main.ts --outdir dist --target node",
+    "build": "bun build src/main.ts --outdir dist --target node --external better-sqlite3",
+    "build:dev": "bun build src/main-dev.ts --outdir dist --target node --external better-sqlite3",
     "start": "node dist/main.js",
     "start:prod": "node dist/main.js",
-    "start:dev": "bash scripts/start.sh",
-    "stop": "bash scripts/stop.sh",
-    "restart": "bash scripts/restart.sh",
-    "status": "bash scripts/status.sh",
-    "logs": "tail -f logs/pump-agent.log",
+    "dev": "bun run src/main-dev.ts",
     "test": "bun test",
-    "test:watch": "bun test --watch",
-    "lint": "eslint . --ext .ts",
-    "lint:fix": "eslint . --ext .ts --fix",
-    "type-check": "bun run tsc --noEmit",
-    "clean": "rm -rf dist coverage",
-    "deploy-check": "bun scripts/deployment-check.js",
-    "test-local": "bun scripts/test-local.js"
+    "test:unit": "bun test tests/unit/",
+    "test:integration": "bun test tests/integration/",
+    "test:e2e": "bun test tests/e2e/",
+    "clean": "rm -rf dist/ data/ logs/",
+    "lint": "eslint src/ --ext .ts",
+    "lint:fix": "eslint src/ --ext .ts --fix",
+    "type-check": "tsc --noEmit"
   },
   "keywords": [
     "cryptocurrency",
@@ -34,9 +29,9 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@influxdata/influxdb-client": "^1.33.2",
     "@influxdata/influxdb-client-apis": "^1.33.2",
     "@modelcontextprotocol/sdk": "^0.4.0",
+    "better-sqlite3": "^12.2.0",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "open": "^10.2.0",
@@ -46,6 +41,7 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.3",
     "@types/jest": "^29.5.0",
     "@types/node": "^20.14.0",

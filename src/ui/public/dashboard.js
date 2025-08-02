@@ -79,14 +79,18 @@ class PumpAgentDashboard {
     }
 
     async loadInitialData() {
-        await Promise.all([
-            this.loadSystemStatus(),
-            this.loadTokenStats(),
-            this.loadPlatformStats(),
-            this.loadRecentTrades(),
-            this.loadRecentTokens(),
-            this.loadLogs()
-        ]);
+        try {
+            await Promise.all([
+                this.loadSystemStatus(),
+                this.loadTokenStats(),
+                this.loadPlatformStats(),
+                this.loadRecentTrades(),
+                this.loadRecentTokens(),
+                this.loadLogs()
+            ]);
+        } catch (error) {
+            console.error('Failed to load initial data:', error);
+        }
     }
 
     async loadSystemStatus() {
@@ -137,7 +141,7 @@ class PumpAgentDashboard {
 
     async loadRecentTokens() {
         try {
-            const response = await fetch('/api/tokens?limit=20');
+            const response = await fetch('/api/tokens');
             const data = await response.json();
             this.displayRecentTokens(data);
         } catch (error) {
@@ -149,7 +153,7 @@ class PumpAgentDashboard {
 
     async loadLogs() {
         try {
-            const response = await fetch('/api/logs?limit=50');
+            const response = await fetch('/api/logs');
             const data = await response.json();
             this.displayLogs(data);
         } catch (error) {
@@ -161,27 +165,30 @@ class PumpAgentDashboard {
 
     displaySystemStatus(data) {
         const container = document.getElementById('system-status');
-        const uptime = this.formatUptime(data.uptime);
-        const memory = this.formatBytes(data.memory.heapUsed);
+        
+        if (!data || typeof data !== 'object') {
+            container.innerHTML = '<div class="error">Invalid system status data</div>';
+            return;
+        }
+
+        const stats = [
+            { label: 'Uptime', value: this.formatUptime(data.uptime || 0) },
+            { label: 'Memory', value: this.formatBytes(data.memory?.heapUsed || 0) },
+            { label: 'Platform', value: data.platform || 'Unknown' },
+            { label: 'Node Version', value: data.nodeVersion || 'Unknown' },
+            { label: 'Database', value: data.database?.connected ? 'Connected' : 'Disconnected' }
+        ];
+
+        const statsHtml = stats.map(stat => `
+            <div class="stat-item">
+                <div class="stat-value">${stat.value}</div>
+                <div class="stat-label">${stat.label}</div>
+            </div>
+        `).join('');
 
         container.innerHTML = `
             <div class="stats-grid">
-                <div class="stat-item">
-                    <div class="stat-value">${data.database.connected ? 'Connected' : 'Disconnected'}</div>
-                    <div class="stat-label">Database</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-value">${uptime}</div>
-                    <div class="stat-label">Uptime</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-value">${memory}</div>
-                    <div class="stat-label">Memory</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-value">${data.platform}</div>
-                    <div class="stat-label">Platform</div>
-                </div>
+                ${statsHtml}
             </div>
         `;
     }
@@ -189,63 +196,37 @@ class PumpAgentDashboard {
     displayTokenStats(data) {
         const container = document.getElementById('token-stats');
         
-        // Ensure data is an array
-        if (!data || !Array.isArray(data)) {
-            container.innerHTML = `
-                <div class="stats-grid">
-                    <div class="stat-item">
-                        <div class="stat-value">0</div>
-                        <div class="stat-label">Total Tokens</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value">0</div>
-                        <div class="stat-label">Total Volume</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value">$0.0000</div>
-                        <div class="stat-label">Avg Price</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value">N/A</div>
-                        <div class="stat-label">Last Update</div>
-                    </div>
-                </div>
-            `;
+        if (!data || typeof data !== 'object') {
+            container.innerHTML = '<div class="error">Invalid token statistics data</div>';
             return;
         }
-        
-        const totalTokens = data.length || 0;
-        const totalVolume = data.reduce((sum, item) => sum + (item.totalVolume || 0), 0);
-        const avgPrice = data.length > 0 ? 
-            data.reduce((sum, item) => sum + (item.avgPrice || 0), 0) / data.length : 0;
+
+        const stats = [
+            { label: 'Total Tokens', value: this.formatNumber(data.totalTokens || 0) },
+            { label: 'Platforms', value: Object.keys(data.tokensByPlatform || {}).length },
+            { label: 'Recent Activity', value: this.formatNumber(data.recentActivity?.tokens || 0) },
+            { label: 'Trades', value: this.formatNumber(data.recentActivity?.trades || 0) }
+        ];
+
+        const statsHtml = stats.map(stat => `
+            <div class="stat-item">
+                <div class="stat-value">${stat.value}</div>
+                <div class="stat-label">${stat.label}</div>
+            </div>
+        `).join('');
 
         container.innerHTML = `
             <div class="stats-grid">
-                <div class="stat-item">
-                    <div class="stat-value">${totalTokens}</div>
-                    <div class="stat-label">Total Tokens</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-value">${this.formatNumber(totalVolume)}</div>
-                    <div class="stat-label">Total Volume</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-value">$${avgPrice.toFixed(4)}</div>
-                    <div class="stat-label">Avg Price</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-value">${data.length > 0 ? data[0].timestamp : 'N/A'}</div>
-                    <div class="stat-label">Last Update</div>
-                </div>
+                ${statsHtml}
             </div>
         `;
     }
 
     updatePlatformChart(data) {
-        if (!this.platformChart) return;
+        if (!data || !data.tokensByPlatform) return;
 
-        const labels = Object.keys(data);
-        const values = Object.values(data);
+        const labels = Object.keys(data.tokensByPlatform);
+        const values = Object.values(data.tokensByPlatform);
 
         this.platformChart.data.labels = labels;
         this.platformChart.data.datasets[0].data = values;
@@ -255,20 +236,22 @@ class PumpAgentDashboard {
     displayRecentTrades(trades) {
         const container = document.getElementById('recent-trades');
         
-        // Ensure trades is an array
-        if (!trades || !Array.isArray(trades) || trades.length === 0) {
-            container.innerHTML = '<div class="loading">No recent trades found</div>';
+        if (!Array.isArray(trades) || trades.length === 0) {
+            container.innerHTML = '<div class="loading">No recent trades available</div>';
             return;
         }
 
-        const tradesHtml = trades.map(trade => `
-            <div class="token-item">
-                <div class="token-info">
-                    <div class="token-symbol">${trade.symbol || 'Unknown'}</div>
-                    <div class="token-name">${trade.mint || 'Unknown Mint'}</div>
+        const tradesHtml = trades.slice(0, 6).map(trade => `
+            <div class="trade-item">
+                <div class="trade-type ${trade.type}">
+                    <i class="fas fa-${trade.type === 'buy' ? 'arrow-up' : 'arrow-down'}"></i>
+                    ${trade.type.toUpperCase()} ${trade.symbol || 'Unknown'}
                 </div>
-                <div class="token-price">
-                    $${(trade.price || 0).toFixed(6)}
+                <div class="trade-details">
+                    <div>Amount: ${this.formatNumber(trade.amount || 0)}</div>
+                    <div>Price: ${this.formatNumber(trade.price || 0)} SOL</div>
+                    <div>Value: ${this.formatNumber(trade.value || 0)} SOL</div>
+                    <div>Platform: ${trade.platform || 'Unknown'}</div>
                 </div>
             </div>
         `).join('');
@@ -279,21 +262,20 @@ class PumpAgentDashboard {
     displayRecentTokens(tokens) {
         const container = document.getElementById('recent-tokens');
         
-        // Ensure tokens is an array
-        if (!tokens || !Array.isArray(tokens) || tokens.length === 0) {
-            container.innerHTML = '<div class="loading">No tokens found</div>';
+        if (!Array.isArray(tokens) || tokens.length === 0) {
+            container.innerHTML = '<div class="loading">No recent tokens available</div>';
             return;
         }
 
-        const tokensHtml = tokens.map(token => `
+        const tokensHtml = tokens.slice(0, 10).map(token => `
             <div class="token-item">
                 <div class="token-info">
                     <div class="token-symbol">${token.symbol || 'Unknown'}</div>
-                    <div class="token-name">${token.name || 'Unknown Name'}</div>
+                    <div class="token-name">${token.name || 'Unknown Token'}</div>
+                    <div class="token-platform">${token.platform || 'Unknown'}</div>
                 </div>
-                <div class="token-platform">${token.platform || 'Unknown'}</div>
                 <div class="token-price">
-                    $${(token.price || 0).toFixed(6)}
+                    ${this.formatNumber(token.price || 0)} SOL
                 </div>
             </div>
         `).join('');
@@ -304,54 +286,55 @@ class PumpAgentDashboard {
     displayLogs(logs) {
         const container = document.getElementById('app-logs');
         
-        // Ensure logs is an array
-        if (!logs || !Array.isArray(logs) || logs.length === 0) {
+        if (!Array.isArray(logs) || logs.length === 0) {
             container.innerHTML = '<div class="loading">No logs available</div>';
             return;
         }
 
-        const logsHtml = logs.map(log => {
-            const timestamp = new Date(log.timestamp || Date.now()).toLocaleTimeString();
-            const level = log.level || 'INFO';
-            const message = log.message || 'No message';
-            
+        const logsHtml = logs.slice(-20).map(log => {
+            const level = log.level?.toLowerCase() || 'info';
+            const timestamp = new Date(log.timestamp).toLocaleTimeString();
             return `
-                <div class="log-entry">
-                    <span class="log-timestamp">[${timestamp}]</span>
-                    <span class="log-level-${level}">[${level}]</span>
-                    <span>${message}</span>
+                <div class="log-entry ${level}">
+                    <div><strong>[${timestamp}]</strong> ${log.message}</div>
                 </div>
             `;
         }).join('');
 
         container.innerHTML = logsHtml;
+        container.scrollTop = container.scrollHeight;
     }
 
     handleDataUpdate(data) {
-        this.lastUpdate = new Date();
-        document.getElementById('last-update').textContent = 
-            `Last updated: ${this.lastUpdate.toLocaleTimeString()}`;
-
         try {
             if (data.tokens) {
                 this.displayRecentTokens(data.tokens);
             }
+            if (data.trades) {
+                this.displayRecentTrades(data.trades);
+            }
             if (data.stats) {
                 this.displayTokenStats(data.stats);
             }
-            if (data.recentTrades) {
-                this.displayRecentTrades(data.recentTrades);
-            }
+            
+            this.updateLastUpdate();
         } catch (error) {
-            console.error('Error handling data update:', error);
+            console.error('Failed to handle data update:', error);
         }
     }
 
     setupAutoRefresh() {
-        // Auto-refresh every 30 seconds
         setInterval(() => {
             this.loadSystemStatus();
-        }, 30000);
+            this.loadTokenStats();
+            this.loadPlatformStats();
+        }, 30000); // Refresh every 30 seconds
+    }
+
+    updateLastUpdate() {
+        const now = new Date();
+        document.getElementById('last-update').textContent = 
+            `Last updated: ${now.toLocaleTimeString()}`;
     }
 
     formatUptime(seconds) {
@@ -361,45 +344,48 @@ class PumpAgentDashboard {
     }
 
     formatBytes(bytes) {
-        const mb = bytes / 1024 / 1024;
+        const mb = bytes / (1024 * 1024);
         return `${mb.toFixed(1)} MB`;
     }
 
     formatNumber(num) {
+        if (num === null || num === undefined) return '0';
         if (num >= 1000000) {
             return (num / 1000000).toFixed(1) + 'M';
         }
         if (num >= 1000) {
             return (num / 1000).toFixed(1) + 'K';
         }
-        return num.toFixed(0);
+        return num.toLocaleString();
     }
 }
 
 // Global refresh functions
-window.refreshStatus = () => {
-    dashboard.loadSystemStatus();
-};
+function refreshStatus() {
+    window.dashboard.loadSystemStatus();
+}
 
-window.refreshStats = () => {
-    dashboard.loadTokenStats();
-};
+function refreshStats() {
+    window.dashboard.loadTokenStats();
+}
 
-window.refreshPlatformStats = () => {
-    dashboard.loadPlatformStats();
-};
+function refreshPlatformStats() {
+    window.dashboard.loadPlatformStats();
+}
 
-window.refreshTrades = () => {
-    dashboard.loadRecentTrades();
-};
+function refreshTrades() {
+    window.dashboard.loadRecentTrades();
+}
 
-window.refreshTokens = () => {
-    dashboard.loadRecentTokens();
-};
+function refreshTokens() {
+    window.dashboard.loadRecentTokens();
+}
 
-window.refreshLogs = () => {
-    dashboard.loadLogs();
-};
+function refreshLogs() {
+    window.dashboard.loadLogs();
+}
 
-// Initialize dashboard
-const dashboard = new PumpAgentDashboard(); 
+// Initialize dashboard when page loads
+document.addEventListener('DOMContentLoaded', () => {
+    window.dashboard = new PumpAgentDashboard();
+}); 
