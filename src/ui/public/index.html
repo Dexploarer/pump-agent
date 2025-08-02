@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pump Agent Dashboard</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: 
+                linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 50%, #1a1a1a 100%),
+                repeating-linear-gradient(
+                    45deg,
+                    transparent,
+                    transparent 2px,
+                    rgba(255, 140, 0, 0.03) 2px,
+                    rgba(255, 140, 0, 0.03) 4px
+                );
+            color: #e0e0e0;
+            min-height: 100vh;
+            position: relative;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: 
+                repeating-linear-gradient(
+                    90deg,
+                    transparent,
+                    transparent 1px,
+                    rgba(255, 140, 0, 0.02) 1px,
+                    rgba(255, 140, 0, 0.02) 2px
+                );
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 16px;
+            position: relative;
+            z-index: 2;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #2d2d2d 0%, #1a1a1a 100%);
+            border: 1px solid #ff8c00;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 
+                0 4px 16px rgba(255, 140, 0, 0.15),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                repeating-linear-gradient(
+                    45deg,
+                    transparent,
+                    transparent 3px,
+                    rgba(255, 140, 0, 0.05) 3px,
+                    rgba(255, 140, 0, 0.05) 6px
+                );
+            pointer-events: none;
+        }
+
+        .header::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            pointer-events: none;
+        }
+
+        .header h1 {
+            color: #ff8c00;
+            font-size: 1.75rem;
+            font-weight: 700;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+            position: relative;
+            z-index: 1;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+            box-shadow: 0 0 8px currentColor;
+        }
+
+        .status-dot.online {
+            background: #00ff88;
+            color: #00ff88;
+        }
+
+        .status-dot.offline {
+            background: #ff4444;
+            color: #ff4444;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.7; transform: scale(1.1); }
+            100% { opacity: 1; transform: scale(1); }
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: linear-gradient(135deg, #2d2d2d 0%, #1a1a1a 100%);
+            border: 1px solid #404040;
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 
+                0 4px 16px rgba(0, 0, 0, 0.3),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                repeating-linear-gradient(
+                    45deg,
+                    transparent,
+                    transparent 4px,
+                    rgba(255, 140, 0, 0.03) 4px,
+                    rgba(255, 140, 0, 0.03) 8px
+                );
+            pointer-events: none;
+        }
+
+        .card::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            pointer-events: none;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 
+                0 8px 24px rgba(255, 140, 0, 0.2),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            border-color: #ff8c00;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #404040;
+            position: relative;
+            z-index: 1;
+        }
+
+        .card-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #ff8c00;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+        }
+
+        .card-icon {
+            font-size: 1.2rem;
+            color: #ff8c00;
+            margin-right: 8px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+            gap: 8px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .stat-item {
+            text-align: center;
+            padding: 8px;
+            background: linear-gradient(135deg, #404040 0%, #2d2d2d 100%);
+            border: 1px solid #505050;
+            border-radius: 8px;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        }
+
+        .stat-value {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: #ff8c00;
+            margin-bottom: 2px;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: #b0b0b0;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .token-list {
+            max-height: 300px;
+            overflow-y: auto;
+            position: relative;
+            z-index: 1;
+        }
+
+        .token-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px;
+            margin-bottom: 6px;
+            background: linear-gradient(135deg, #404040 0%, #2d2d2d 100%);
+            border: 1px solid #505050;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        }
+
+        .token-item:hover {
+            transform: translateX(3px);
+            box-shadow: 
+                0 2px 8px rgba(255, 140, 0, 0.15),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            border-color: #ff8c00;
+        }
+
+        .token-info {
+            flex: 1;
+        }
+
+        .token-symbol {
+            font-weight: 600;
+            color: #ff8c00;
+            font-size: 0.9rem;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+        }
+
+        .token-name {
+            color: #b0b0b0;
+            font-size: 0.75rem;
+        }
+
+        .token-platform {
+            background: linear-gradient(135deg, #ff8c00 0%, #ff6b00 100%);
+            color: #1a1a1a;
+            padding: 2px 6px;
+            border-radius: 8px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-shadow: 0 1px 1px rgba(255, 255, 255, 0.3);
+        }
+
+        .token-price {
+            text-align: right;
+            font-weight: 600;
+            color: #00ff88;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+            font-size: 0.9rem;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 200px;
+            margin-top: 12px;
+            background: linear-gradient(135deg, #404040 0%, #2d2d2d 100%);
+            border: 1px solid #505050;
+            border-radius: 8px;
+            padding: 12px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #b0b0b0;
+            font-style: italic;
+            font-size: 0.9rem;
+        }
+
+        .error {
+            background: linear-gradient(135deg, #4a1a1a 0%, #2d1a1a 100%);
+            color: #ff6b6b;
+            padding: 8px;
+            border-radius: 8px;
+            margin: 6px 0;
+            border: 1px solid #ff4444;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            font-size: 0.85rem;
+        }
+
+        .refresh-btn {
+            background: linear-gradient(135deg, #ff8c00 0%, #ff6b00 100%);
+            color: #1a1a1a;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            text-shadow: 0 1px 1px rgba(255, 255, 255, 0.3);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+        }
+
+        .refresh-btn:hover {
+            background: linear-gradient(135deg, #ff6b00 0%, #ff8c00 100%);
+            transform: translateY(-1px);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+        }
+
+        .last-update {
+            font-size: 0.75rem;
+            color: #808080;
+            text-align: center;
+            margin-top: 12px;
+            padding: 8px;
+            background: linear-gradient(135deg, #2d2d2d 0%, #1a1a1a 100%);
+            border: 1px solid #404040;
+            border-radius: 8px;
+        }
+
+        .logs-container {
+            max-height: 300px;
+            overflow-y: auto;
+            background: linear-gradient(135deg, #1a1a1a 0%, #0d0d0d 100%);
+            border: 1px solid #404040;
+            border-radius: 8px;
+            padding: 12px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.8rem;
+            line-height: 1.4;
+        }
+
+        .log-entry {
+            margin-bottom: 4px;
+            padding: 2px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .log-timestamp {
+            color: #808080;
+            font-size: 0.7rem;
+        }
+
+        .log-level-INFO {
+            color: #00ff88;
+        }
+
+        .log-level-ERROR {
+            color: #ff4444;
+        }
+
+        .log-level-WARN {
+            color: #ff8c00;
+        }
+
+        .log-level-DEBUG {
+            color: #888888;
+        }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #2d2d2d;
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: linear-gradient(135deg, #ff8c00 0%, #ff6b00 100%);
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(135deg, #ff6b00 0%, #ff8c00 100%);
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 12px;
+            }
+            
+            .header h1 {
+                font-size: 1.5rem;
+            }
+            
+            .grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1><i class="fas fa-chart-line"></i> Pump Agent Dashboard</h1>
+            <div class="status-indicator">
+                <span id="status-text">Connecting...</span>
+                <div id="status-dot" class="status-dot offline"></div>
+            </div>
+        </div>
+
+        <div class="grid">
+            <!-- System Status -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title"><i class="fas fa-server card-icon"></i> System Status</h2>
+                    <button class="refresh-btn" onclick="refreshStatus()">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                </div>
+                <div id="system-status" class="loading">
+                    Loading system status...
+                </div>
+            </div>
+
+            <!-- Token Statistics -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title"><i class="fas fa-coins card-icon"></i> Token Statistics</h2>
+                    <button class="refresh-btn" onclick="refreshStats()">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                </div>
+                <div id="token-stats" class="loading">
+                    Loading token statistics...
+                </div>
+            </div>
+
+            <!-- Platform Distribution -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title"><i class="fas fa-chart-pie card-icon"></i> Platform Distribution</h2>
+                    <button class="refresh-btn" onclick="refreshPlatformStats()">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                </div>
+                <div class="chart-container">
+                    <canvas id="platform-chart"></canvas>
+                </div>
+            </div>
+
+            <!-- Recent Trades -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title"><i class="fas fa-exchange-alt card-icon"></i> Recent Trades</h2>
+                    <button class="refresh-btn" onclick="refreshTrades()">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                </div>
+                <div id="recent-trades" class="loading">
+                    Loading recent trades...
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Tokens -->
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title"><i class="fas fa-list card-icon"></i> Recent Tokens</h2>
+                <button class="refresh-btn" onclick="refreshTokens()">
+                    <i class="fas fa-sync-alt"></i>
+                </button>
+            </div>
+            <div id="recent-tokens" class="token-list loading">
+                Loading recent tokens...
+            </div>
+        </div>
+
+        <!-- Application Logs -->
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title"><i class="fas fa-terminal card-icon"></i> Application Logs</h2>
+                <button class="refresh-btn" onclick="refreshLogs()">
+                    <i class="fas fa-sync-alt"></i>
+                </button>
+            </div>
+            <div id="app-logs" class="logs-container">
+                <div class="loading">Loading logs...</div>
+            </div>
+        </div>
+
+        <div class="last-update" id="last-update">
+            Last updated: Never
+        </div>
+    </div>
+
+    <script src="dashboard.js"></script>
+</body>
+</html> 

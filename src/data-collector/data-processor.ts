@@ -334,32 +334,61 @@ export class DataProcessor extends EventEmitter {
     trades: TradeData[],
     pricePoints: PricePoint[]
   ): Promise<void> {
+    if (!this.config.enableDatabaseWrites) {
+      logger.debug('Database writes disabled, skipping batch write');
+      return;
+    }
+
     try {
       const writePromises: Promise<void>[] = [];
 
       // Write token updates
       for (const tokenData of tokenUpdates) {
-        writePromises.push(this.influxClient.writeTokenData(tokenData));
+        writePromises.push(
+          this.influxClient.writeTokenData(tokenData).catch(error => {
+            logger.warn('Failed to write token data', { 
+              mint: tokenData.mint, 
+              error: error instanceof Error ? error.message : String(error) 
+            });
+          })
+        );
       }
 
       // Write trades
       for (const tradeData of trades) {
-        writePromises.push(this.influxClient.writeTradeData(tradeData));
+        writePromises.push(
+          this.influxClient.writeTradeData(tradeData).catch(error => {
+            logger.warn('Failed to write trade data', { 
+              mint: tradeData.mint, 
+              error: error instanceof Error ? error.message : String(error) 
+            });
+          })
+        );
       }
 
       // Write price points
       for (const pricePoint of pricePoints) {
-        writePromises.push(this.influxClient.writePriceData(pricePoint));
+        writePromises.push(
+          this.influxClient.writePriceData(pricePoint).catch(error => {
+            logger.warn('Failed to write price data', { 
+              mint: pricePoint.mint, 
+              error: error instanceof Error ? error.message : String(error) 
+            });
+          })
+        );
       }
 
-      await Promise.all(writePromises);
+      // Wait for all writes to complete (including failed ones)
+      const results = await Promise.allSettled(writePromises);
+      const successfulWrites = results.filter(result => result.status === 'fulfilled').length;
+      this.stats.databaseWrites += successfulWrites;
       
-      this.stats.databaseWrites += writePromises.length;
-      
-      logger.debug('Batch written to database', {
+      logger.debug('Batch write completed', {
         tokenUpdates: tokenUpdates.length,
         trades: trades.length,
         pricePoints: pricePoints.length,
+        successfulWrites,
+        totalWrites: writePromises.length,
       });
 
     } catch (error) {
@@ -370,7 +399,7 @@ export class DataProcessor extends EventEmitter {
         pricePoints: pricePoints.length,
         error: error instanceof Error ? error.message : String(error),
       });
-      throw error;
+      // Don't throw - let the application continue
     }
   }
 

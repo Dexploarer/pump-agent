@@ -13,11 +13,13 @@ export const WEBSOCKET_CONFIG = {
 export const PLATFORM_PATTERNS = {
   PUMP_FUN_SUFFIX: 'pump',
   LETSBONK_FUN_SUFFIX: 'bonk',
+  BONKAKE_SUFFIX: 'bonkake',
 } as const;
 
 export const PLATFORMS = {
   PUMP_FUN: 'pump.fun',
   LETSBONK_FUN: 'letsbonk.fun',
+  BONKAKE: 'bonkake.fun',
   UNKNOWN: 'unknown',
 } as const;
 

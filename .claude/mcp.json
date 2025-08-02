@@ -1,0 +1,13 @@
+{  
+    "mcpServers": {  
+        "Kluster-Verify-Code-MCP": {  
+            "command": "npx",  
+            "args": [  
+                "@klusterai/kluster-verify-code-mcp@latest"  
+            ],  
+            "env": {  
+                "KLUSTER_API_KEY": "0898a23c-963f-4e27-9484-88c48dd549f7"  
+            }  
+        }  
+    }  
+}

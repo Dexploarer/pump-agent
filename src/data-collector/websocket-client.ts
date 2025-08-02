@@ -1,8 +1,8 @@
 import WebSocket from 'ws';
 import { EventEmitter } from 'events';
-import { logger } from '../utils/logger';
+import { log } from '../utils/winston-logger.js';
 import { z } from 'zod';
-import { detectPlatformWithBuffer } from '../utils/platform-detection-buffer';
+import { getMintOrigin } from '../utils/platform-detection-buffer.js';
 
 // Platform enum for token sources
 export const PlatformSchema = z.enum(['pump.fun', 'letsbonk.fun']);
@@ -97,11 +97,14 @@ export class PumpPortalClient extends EventEmitter {
   constructor(options: PumpPortalClientOptions) {
     super();
     this.options = options;
+    
+    // Set max listeners to prevent memory leak warnings
+    this.setMaxListeners(20);
   }
 
   public async connect(): Promise<void> {
     if (this.isConnecting || this.ws?.readyState === WebSocket.OPEN) {
-      logger.warn('WebSocket is already connected or connecting');
+      log.warn('WebSocket is already connected or connecting');
       return;
     }
 
@@ -109,9 +112,14 @@ export class PumpPortalClient extends EventEmitter {
     this.isClosing = false;
 
     try {
-      logger.info('Connecting to PumpPortal WebSocket...', { url: this.options.url });
+      log.info('Connecting to PumpPortal WebSocket...', { url: this.options.url });
       
-      this.ws = new WebSocket(this.options.url);
+      this.ws = new WebSocket(this.options.url, {
+        headers: {
+          'User-Agent': 'PumpAgent/1.0',
+          'Origin': 'https://pumpportal.fun'
+        }
+      });
       
       this.ws.on('open', this.handleOpen.bind(this));
       this.ws.on('message', this.handleMessage.bind(this));
@@ -119,22 +127,24 @@ export class PumpPortalClient extends EventEmitter {
       this.ws.on('close', this.handleClose.bind(this));
       this.ws.on('ping', this.handlePing.bind(this));
 
-      // Wait for connection to be established
+      // Simple connection wait - just wait for the 'open' event
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
           reject(new Error('WebSocket connection timeout'));
-        }, 30000);
+        }, 15000);
 
-        this.once('connected', () => {
+        this.ws!.once('open', () => {
           clearTimeout(timeout);
           resolve();
         });
 
-        this.once('error', (error: Error) => {
+        this.ws!.once('error', (error) => {
           clearTimeout(timeout);
           reject(error);
         });
       });
+
+      log.info('WebSocket connection established successfully');
 
     } catch (error) {
       this.isConnecting = false;
@@ -143,7 +153,7 @@ export class PumpPortalClient extends EventEmitter {
   }
 
   private handleOpen(): void {
-    logger.info('WebSocket connection established');
+    log.info('WebSocket connection established');
     this.isConnecting = false;
     this.reconnectAttempts = 0;
     
@@ -165,13 +175,21 @@ export class PumpPortalClient extends EventEmitter {
       this.subscribeToTokens(tokens);
     }
 
-    this.emit('connected');
+    log.info('PumpPortal connection successful - ready to collect data');
   }
 
   private handleMessage(data: WebSocket.Data): void {
     try {
       const dataStr = typeof data === 'string' ? data : Buffer.isBuffer(data) ? data.toString('utf-8') : String(data);
       const message: unknown = JSON.parse(dataStr);
+      
+      // Log server responses for debugging
+      if (typeof message === 'object' && message !== null) {
+        const msg = message as Record<string, unknown>;
+        if (msg['message'] || msg['errors']) {
+          log.info('PumpPortal server response:', { message: msg['message'], errors: msg['errors'] });
+        }
+      }
       
       // Add to queue for processing
       this.messageQueue.push(message);
@@ -181,7 +199,7 @@ export class PumpPortalClient extends EventEmitter {
         void this.processMessageQueue();
       }
     } catch (error) {
-      logger.error('Failed to parse WebSocket message', { error });
+      log.error('Failed to parse WebSocket message', { error });
     }
   }
 
@@ -199,7 +217,7 @@ export class PumpPortalClient extends EventEmitter {
         // Check if it's a subscription confirmation
         if (typeof message === 'object' && message !== null && 'message' in message) {
           const subMessage = SubscriptionMessageSchema.parse(message);
-          logger.info('Subscription message', { message: subMessage.message });
+          log.info('Subscription message', { message: subMessage.message });
           continue;
         }
 
@@ -216,13 +234,13 @@ export class PumpPortalClient extends EventEmitter {
             const tradeMessage = TradeMessageSchema.parse(message);
             this.handleTradeMessage(tradeMessage);
           } else {
-            logger.debug('Unknown txType', { txType, message });
+            log.debug('Unknown txType', { txType, message });
           }
         } else {
-          logger.debug('Unknown message format', { message });
+          log.debug('Unknown message format', { message });
         }
       } catch (error) {
-        logger.error('Failed to process message', { error });
+        log.error('Failed to process message', { error });
       }
     }
 
@@ -234,67 +252,42 @@ export class PumpPortalClient extends EventEmitter {
     void this.processNewTokenWithPlatformDetection(message);
   }
 
-  private async processNewTokenWithPlatformDetection(message: z.infer<typeof NewTokenMessageSchema>): Promise<void> {
+  private processNewTokenWithPlatformDetection(message: z.infer<typeof NewTokenMessageSchema>): void {
     try {
       // Detect platform using buffered RPC-based detection
-      const platform = await detectPlatformWithBuffer(message.mint);
+      const platformResult = getMintOrigin(message.mint);
       
       // Convert to our TokenData format
       const tokenData: TokenData = {
         mint: message.mint,
-        name: message.name,
         symbol: message.symbol,
+        name: message.name,
         price: message.marketCapSol / 1000, // Approximate price
         priceSOL: message.marketCapSol / 1000,
         marketCap: message.marketCapSol * 100, // Approximate USD market cap (SOL at $100)
         supply: 1000000000, // Default supply
         timestamp: Date.now(),
-        platform, // Properly typed platform
+        platform: platformResult.platform,
         creator: message.traderPublicKey,
         uri: message.uri,
       };
-      
-      this.emit('newToken', tokenData);
-      logger.info('New token detected', { 
-        mint: message.mint, 
-        symbol: message.symbol,
-        name: message.name,
-        platform: platform
-      });
+
+      this.emit('tokenData', tokenData);
     } catch (error) {
-      logger.error('Failed to process new token with platform detection', {
-        mint: message.mint,
-        error: error instanceof Error ? error.message : String(error)
-      });
-      
-      // Fallback with unknown platform
-      const tokenData: TokenData = {
-        mint: message.mint,
-        name: message.name,
-        symbol: message.symbol,
-        price: message.marketCapSol / 1000,
-        priceSOL: message.marketCapSol / 1000,
-        marketCap: message.marketCapSol * 100,
-        supply: 1000000000,
-        timestamp: Date.now(),
-        platform: 'pump.fun' satisfies Platform, // Default fallback
-        creator: message.traderPublicKey,
-        uri: message.uri,
-      };
-      
-      this.emit('newToken', tokenData);
+      log.error('Failed to process token data', { error, message });
     }
   }
 
   private handleTradeMessage(message: z.infer<typeof TradeMessageSchema>): void {
-    // Process platform detection asynchronously to avoid blocking
-    void this.processTradeWithPlatformDetection(message);
+    // Process platform detection synchronously to avoid blocking
+    const tradeData = this.processTradeWithPlatformDetection(message);
+    this.emit('tradeData', tradeData);
   }
 
-  private async processTradeWithPlatformDetection(message: z.infer<typeof TradeMessageSchema>): Promise<void> {
+  private processTradeWithPlatformDetection(message: z.infer<typeof TradeMessageSchema>): TradeData {
     try {
       // Detect platform using buffered RPC-based detection
-      const platform = await detectPlatformWithBuffer(message.mint);
+      const platformResult = getMintOrigin(message.mint);
       
       // Convert to our TradeData format
       const tradeData: TradeData = {
@@ -308,42 +301,23 @@ export class PumpPortalClient extends EventEmitter {
         trader: message.traderPublicKey,
         amount: message.tokenAmount,
         txHash: message.signature,
-        platform, // Properly typed platform
+        platform: platformResult.platform,
       };
-      
-      this.emit('tokenTrade', tradeData);
+
+      return tradeData;
     } catch (error) {
-      logger.error('Failed to process trade with platform detection', {
-        mint: message.mint,
-        error: error instanceof Error ? error.message : String(error)
-      });
-      
-      // Fallback with default platform
-      const tradeData: TradeData = {
-        mint: message.mint,
-        price: message.pricePerToken || (message.solAmount / message.tokenAmount),
-        priceSOL: message.pricePerToken || (message.solAmount / message.tokenAmount),
-        volumeSOL: message.solAmount,
-        marketCap: message.marketCapSol * 100,
-        timestamp: Date.now(),
-        type: message.txType,
-        trader: message.traderPublicKey,
-        amount: message.tokenAmount,
-        txHash: message.signature,
-        platform: 'pump.fun' satisfies Platform, // Default fallback
-      };
-      
-      this.emit('tokenTrade', tradeData);
+      log.error('Failed to process trade data', { error, message });
+      throw error; // Re-throw to be caught by handleTradeMessage
     }
   }
 
   private handleError(error: Error): void {
-    logger.error('WebSocket error', { error: error.message });
+    log.error('WebSocket error', { error: error.message });
     this.emit('error', error);
   }
 
   private handleClose(code: number, reason: Buffer): void {
-    logger.info('WebSocket connection closed', { code, reason: reason.toString() });
+    log.info('WebSocket connection closed', { code, reason: reason.toString() });
     
     this.stopHeartbeat();
     this.ws = null;
@@ -381,7 +355,7 @@ export class PumpPortalClient extends EventEmitter {
 
   private scheduleReconnect(): void {
     if (this.reconnectAttempts >= this.options.maxReconnectAttempts) {
-      logger.error('Max reconnection attempts reached');
+      log.error('Max reconnection attempts reached');
       this.emit('maxReconnectAttemptsReached');
       return;
     }
@@ -392,35 +366,51 @@ export class PumpPortalClient extends EventEmitter {
       60000 // Max 1 minute delay
     );
 
-    logger.info(`Scheduling reconnection attempt ${this.reconnectAttempts}/${this.options.maxReconnectAttempts}`, { delay });
+    log.info(`Scheduling reconnection attempt ${this.reconnectAttempts}/${this.options.maxReconnectAttempts}`, { delay });
 
     this.reconnectTimer = setTimeout(() => {
       void this.connect().catch((error: unknown) => {
-        logger.error('Reconnection failed', { error });
+        log.error('Reconnection failed', { error });
       });
     }, delay);
   }
 
   private subscribeToEvents(): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      logger.warn('Cannot subscribe - WebSocket not connected');
+      log.warn('Cannot subscribe - WebSocket not connected');
       return;
     }
 
-    // Subscribe to new token events
-    this.sendMessage({
-      method: 'subscribeNewToken',
-    });
+    log.info('Subscribing to PumpPortal events...');
+    
+    // Send subscription messages with delays to avoid overwhelming the server
+    setTimeout(() => {
+      this.sendMessage({
+        method: 'subscribeNewToken',
+      });
+      log.info('Sent subscribeNewToken message');
+    }, 500);
 
-    // Subscribe to migration events
-    this.sendMessage({
-      method: 'subscribeMigration',
-    });
+    setTimeout(() => {
+      this.sendMessage({
+        method: 'subscribeTokenTrade',
+      });
+      log.info('Sent subscribeTokenTrade message');
+    }, 1000);
+
+    setTimeout(() => {
+      this.sendMessage({
+        method: 'subscribeMigration',
+      });
+      log.info('Sent subscribeMigration message');
+    }, 1500);
+
+    log.info('Subscription messages scheduled to be sent to PumpPortal');
   }
 
   public subscribeToTokens(tokens: string[]): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      logger.warn('Cannot subscribe to tokens - WebSocket not connected');
+      log.warn('Cannot subscribe to tokens - WebSocket not connected');
       return;
     }
 
@@ -436,7 +426,7 @@ export class PumpPortalClient extends EventEmitter {
 
   public unsubscribeFromTokens(tokens: string[]): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      logger.warn('Cannot unsubscribe from tokens - WebSocket not connected');
+      log.warn('Cannot unsubscribe from tokens - WebSocket not connected');
       return;
     }
 
@@ -452,19 +442,19 @@ export class PumpPortalClient extends EventEmitter {
 
   private sendMessage(message: unknown): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      logger.error('Cannot send message - WebSocket not connected');
+      log.error('Cannot send message - WebSocket not connected');
       return;
     }
 
     try {
       this.ws.send(JSON.stringify(message));
     } catch (error) {
-      logger.error('Failed to send message', { error, message });
+      log.error('Failed to send message', { error, message });
     }
   }
 
   public disconnect(): void {
-    logger.info('Disconnecting WebSocket client...');
+    log.info('Disconnecting WebSocket client...');
     
     this.isClosing = true;
     
@@ -477,8 +467,12 @@ export class PumpPortalClient extends EventEmitter {
     // Stop heartbeat
     this.stopHeartbeat();
 
+    // Remove all event listeners to prevent memory leaks
+    this.removeAllListeners();
+
     // Close WebSocket connection
     if (this.ws) {
+      this.ws.removeAllListeners();
       if (this.ws.readyState === WebSocket.OPEN) {
         this.ws.close(1000, 'Client disconnecting');
       }

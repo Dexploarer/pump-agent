@@ -1,23 +1,29 @@
 import dotenv from 'dotenv';
-import path from 'path';
-import { TokenData as WSTokenData, TradeData as WSTradeData, PumpPortalClient } from './data-collector/websocket-client';
-import { TokenData, TradeData } from './database/schema';
-import { DataProcessor } from './data-collector/data-processor';
-import { PriceTracker } from './data-collector/price-tracker';
-import { InfluxClient } from './database/influx-client';
-import { MCPServer, createMCPServer } from './mcp-agent/server';
-import { PriceAlert } from './data-collector/price-tracker';
-import { logger } from './utils/logger';
-import { getEnvironmentConfig } from './utils/validators';
-import { TOKEN_CLEANUP_CONFIG } from './utils/constants';
+import { SimplePumpPortalClient } from './data-collector/simple-websocket-client.js';
+import { TokenData, TradeData, AlertEventData, TrendEventData, CleanupEventData } from './database/schema.js';
+import { DataProcessor } from './data-collector/data-processor.js';
+import { PriceTracker, TrackingStats } from './data-collector/price-tracker.js';
+import { InfluxClient } from './database/influx-client.js';
+import { MCPServer, createMCPServer } from './mcp-agent/server.js';
+
+import { log } from './utils/winston-logger.js';
+import { getEnvironmentConfig } from './utils/validators.js';
+import { TOKEN_CLEANUP_CONFIG, Platform } from './utils/constants.js';
+import { WSTokenData, WSTradeData, validateWSTokenData, validateWSTradeData } from './types/websocket.js';
 
 // Load environment variables
-dotenv.config({ path: path.join(__dirname, '../config/.env') });
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+dotenv.config({ path: join(__dirname, '../config/.env') });
 
 class PumpAgent {
   private config: ReturnType<typeof getEnvironmentConfig>;
   private influxClient!: InfluxClient;
-  private pumpPortalClient!: PumpPortalClient;
+  private pumpPortalClient!: SimplePumpPortalClient;
   private dataProcessor!: DataProcessor;
   private priceTracker!: PriceTracker;
   private mcpServer!: MCPServer;
@@ -36,55 +42,93 @@ class PumpAgent {
       if (this.isShuttingDown) return;
       
       this.isShuttingDown = true;
-      logger.info(`Received ${signal}, starting graceful shutdown...`);
+      log.info(`Received ${signal}, starting graceful shutdown...`);
       
       try {
         await this.stop();
         process.exit(0);
       } catch (error) {
-        logger.error('Error during shutdown', { error });
+        log.error('Error during shutdown', { error });
         process.exit(1);
       }
     };
 
     process.on('SIGINT', () => void shutdownHandler('SIGINT'));
     process.on('SIGTERM', () => void shutdownHandler('SIGTERM'));
+    
+    // Handle unhandled promise rejections
+    process.on('unhandledRejection', (reason, promise) => {
+      log.error('Unhandled promise rejection', { reason, promise });
+    });
+    
+    // Handle uncaught exceptions
+    process.on('uncaughtException', (error) => {
+      log.error('Uncaught exception', { error });
+      process.exit(1);
+    });
   }
 
-  public async start(): Promise<void> {
+    public async start(): Promise<void> {
     try {
-      logger.info('Starting Pump Agent...', {
+      log.info('Starting Pump Agent...', {
         environment: this.config.NODE_ENV,
         maxTokens: this.config.MAX_TOKENS_TRACKED,
       });
-
-      // Initialize InfluxDB client
-      await this.initializeDatabase();
-
-      // Initialize price tracker
-      this.priceTracker = new PriceTracker(this.influxClient);
       
-      // Initialize data processor
-      this.dataProcessor = new DataProcessor(this.influxClient);
-      
-      // Initialize PumpPortal client (handles both pump.fun and letsbonk.fun)
-      await this.initializePumpPortalClient();
+      // Initialize core components with consistent error handling
+      await this.initializeCoreComponents();
 
       // Initialize MCP server
       await this.initializeMCPServer();
 
-      logger.info('Pump Agent started successfully');
+      // Initialize and start UI server (disabled for now to focus on data collection)
+      // await this.initializeUIServer();
+
+      log.info('Pump Agent started successfully');
       
       // Log stats periodically
       this.startStatsLogger();
     } catch (error) {
-      logger.error('Failed to start Pump Agent', { error });
+      log.error('Failed to start Pump Agent', { error });
       throw error;
     }
   }
 
+  private async initializeCoreComponents(): Promise<void> {
+    // Initialize InfluxDB client (don't fail if unavailable)
+    try {
+      await this.initializeDatabase();
+    } catch (error) {
+      log.warn('Database initialization failed, continuing without database', { error });
+    }
+    
+    // Initialize price tracker
+    this.priceTracker = new PriceTracker(this.influxClient);
+    
+    // Initialize data processor with database write configuration
+    const enableDatabaseWrites = this.influxClient.isHealthy();
+    this.dataProcessor = new DataProcessor(this.influxClient, {
+      enableDatabaseWrites,
+      enableValidation: true,
+      batchSize: 100,
+      flushInterval: 5000,
+      dedupWindowMs: 1000,
+    });
+    
+    if (!enableDatabaseWrites) {
+      log.warn('Database writes disabled due to InfluxDB connection failure');
+    }
+    
+    // Initialize PumpPortal client (don't fail if unavailable)
+    try {
+      await this.initializePumpPortalClient();
+    } catch (error) {
+      log.warn('PumpPortal initialization failed, continuing without data feed', { error });
+    }
+  }
+
   private async initializeDatabase(): Promise<void> {
-    logger.info('Initializing InfluxDB connection...');
+    log.info('Initializing InfluxDB connection...');
     
     this.influxClient = new InfluxClient(
       {
@@ -101,29 +145,36 @@ class PumpAgent {
     try {
       await this.influxClient.connect();
     } catch (error) {
-      logger.warn('InfluxDB connection failed, continuing without database', { error });
+      log.warn('InfluxDB connection failed, continuing without database', { error });
     }
 
-    logger.info('InfluxDB connection established');
+    log.info('InfluxDB connection established');
   }
 
   private async initializePumpPortalClient(): Promise<void> {
-    logger.info('Initializing PumpPortal client (handles both pump.fun and letsbonk.fun)...');
+    log.info('Initializing PumpPortal client (handles both pump.fun and letsbonk.fun)...');
+    log.info('PumpPortal URL:', { url: this.config.PUMPPORTAL_WSS_URL });
     
-    this.pumpPortalClient = new PumpPortalClient({
-      url: this.config.PUMPPORTAL_WSS_URL,
-      reconnectDelay: this.config.PUMPPORTAL_RECONNECT_DELAY,
-      maxReconnectAttempts: this.config.MAX_RECONNECT_ATTEMPTS,
-      heartbeatInterval: 30000, // 30 seconds
-    });
+    this.pumpPortalClient = new SimplePumpPortalClient();
 
     // Setup event handlers
     this.setupPumpPortalHandlers();
 
-    // Start PumpPortal connection
-    await this.pumpPortalClient.connect();
-    
-    logger.info('PumpPortal client started successfully');
+    // Start PumpPortal connection with timeout
+    try {
+      log.info('Attempting to connect to PumpPortal...');
+      
+      const connectionPromise = this.pumpPortalClient.connect();
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Connection timeout')), 30000)
+      );
+      
+      await Promise.race([connectionPromise, timeoutPromise]);
+      log.info('PumpPortal client started successfully');
+    } catch (error) {
+      log.warn('PumpPortal connection failed, will retry in background', { error });
+      // Don't throw, let the client handle reconnection
+    }
   }
 
   private setupPumpPortalHandlers(): void {
@@ -131,16 +182,28 @@ class PumpAgent {
     this.pumpPortalClient.on('newToken', (wsTokenData: WSTokenData) => {
       void (async () => {
         try {
+          // Validate token data
+          if (!validateWSTokenData(wsTokenData)) {
+            log.error('Invalid token data received', { wsTokenData });
+            return;
+          }
+          // Validate platform type before casting
+          const platform = this.validatePlatform(wsTokenData.pool);
+          if (!platform) {
+            log.error('Invalid platform type received', { platform: wsTokenData.pool });
+            return;
+          }
+
           // Map WebSocket token data to database schema
           const tokenData: Omit<TokenData, 'timestamp'> = {
             mint: wsTokenData.mint,
             symbol: wsTokenData.symbol,
             name: wsTokenData.name,
-            platform: wsTokenData.platform,
+            platform: platform,
             platformConfidence: 1.0, // Default confidence
-            price: wsTokenData.price,
+            price: wsTokenData.price || 0, // Default to 0 if undefined
             volume24h: 0, // Will be updated from trades
-            marketCap: wsTokenData.marketCap,
+            marketCap: wsTokenData.marketCapSol, // Use marketCapSol field
             liquidity: 0, // Will be calculated
             priceChange24h: 0, // Will be calculated
             volumeChange24h: 0, // Will be calculated
@@ -164,16 +227,16 @@ class PumpAgent {
         // Subscribe to token trades
         this.pumpPortalClient.subscribeToTokens([wsTokenData.mint]);
         
-        logger.info('✅ New token processed and tracked', {
+        log.info('✅ New token processed and tracked', {
           mint: wsTokenData.mint,
           symbol: wsTokenData.symbol,
-          platform: wsTokenData.platform,
-          price: wsTokenData.price,
-          marketCap: wsTokenData.marketCap,
+          platform: wsTokenData.pool,
+          price: wsTokenData.price || 0,
+          marketCap: wsTokenData.marketCapSol,
           subscribed: true
         });
         } catch (error) {
-          logger.error('Failed to process new token', { error, wsTokenData });
+          log.error('Failed to process new token', { error, wsTokenData });
         }
       })();
     });
@@ -182,10 +245,22 @@ class PumpAgent {
     this.pumpPortalClient.on('tokenTrade', (wsTradeData: WSTradeData) => {
       void (async () => {
         try {
+          // Validate trade data
+          if (!validateWSTradeData(wsTradeData)) {
+            log.error('Invalid trade data received', { wsTradeData });
+            return;
+          }
+          // Validate platform type before casting
+          const platform = this.validatePlatform(wsTradeData.platform);
+          if (!platform) {
+            log.error('Invalid platform type received in trade data', { platform: wsTradeData.platform });
+            return;
+          }
+
           // Map WebSocket trade data to database schema
           const tradeData: Omit<TradeData, 'timestamp'> = {
             mint: wsTradeData.mint,
-            platform: wsTradeData.platform,
+            platform: platform,
             type: wsTradeData.type,
             amount: wsTradeData.amount,
             price: wsTradeData.price,
@@ -201,7 +276,7 @@ class PumpAgent {
             timestamp: new Date()
           });
           
-          logger.debug('📊 Trade processed', {
+          log.debug('📊 Trade processed', {
             mint: wsTradeData.mint,
             platform: wsTradeData.platform,
             type: wsTradeData.type,
@@ -217,11 +292,11 @@ class PumpAgent {
             mint: wsTradeData.mint,
             symbol: '', // Symbol not available in trade data
             name: '',
-            platform: wsTradeData.platform,
+            platform: platform, // Use validated platform
             platformConfidence: 1.0,
             price: wsTradeData.price,
             volume24h: wsTradeData.volumeSOL || 0,
-            marketCap: wsTradeData.marketCap,
+            marketCap: wsTradeData.marketCap || 0, // Default to 0 if undefined
             liquidity: 0,
             priceChange24h: 0,
             volumeChange24h: 0,
@@ -230,15 +305,15 @@ class PumpAgent {
           };
           await this.priceTracker.trackToken(tokenData);
         } catch (error) {
-          logger.error('Failed to process trade', { error, wsTradeData });
+          log.error('Failed to process trade', { error, wsTradeData });
         }
       })();
     });
 
     // Handle connection events
     this.pumpPortalClient.on('connected', () => {
-      logger.info('🚀 PumpPortal connected - tracking both pump.fun and letsbonk.fun');
-      logger.info('📡 WebSocket Status:', {
+      log.info('🚀 PumpPortal connected - tracking both pump.fun and letsbonk.fun');
+      log.info('📡 WebSocket Status:', {
         url: this.config.PUMPPORTAL_WSS_URL,
         platforms: ['pump.fun', 'letsbonk.fun'],
         maxTokensTracked: this.config.MAX_TOKENS_TRACKED
@@ -246,28 +321,28 @@ class PumpAgent {
     });
 
     this.pumpPortalClient.on('disconnected', () => {
-      logger.warn('PumpPortal disconnected');
+      log.warn('PumpPortal disconnected');
     });
 
     this.pumpPortalClient.on('error', (error: Error) => {
-      logger.error('PumpPortal error', { error });
+      log.error('PumpPortal error', { error });
     });
 
     // Handle price alerts
-    this.priceTracker.on('alertTriggered', (data: { alert: PriceAlert; tokenData: any }) => {
-      logger.info('Price alert triggered', { alert: data.alert, tokenData: data.tokenData });
+    this.priceTracker.on('alertTriggered', (data: AlertEventData) => {
+      log.info('Price alert triggered', { alert: data.alert, tokenData: data.tokenData });
       // Could send notifications or trigger trading logic here
     });
 
     // Handle trend detection
-    this.priceTracker.on('trendDetected', (trend: any) => {
-      logger.info('Trend detected', trend);
+    this.priceTracker.on('trendDetected', (trend: TrendEventData) => {
+      log.info('Trend detected', trend as unknown as Record<string, unknown>);
       // Could send notifications or trigger trading logic here
     });
 
     // Handle token cleanup
-    this.priceTracker.on('tokenCleanedUp', (reason: any) => {
-      logger.info('🧹 Token cleaned up', reason);
+    this.priceTracker.on('tokenCleanedUp', (reason: CleanupEventData) => {
+      log.info('🧹 Token cleaned up', reason as unknown as Record<string, unknown>);
       
       // Unsubscribe from WebSocket updates
       if (reason.mint) {
@@ -277,7 +352,7 @@ class PumpAgent {
   }
 
   private async initializeMCPServer(): Promise<void> {
-    logger.info('Initializing MCP server...');
+    log.info('Initializing MCP server...');
     
     // Create MCP server with influx client and price tracker
     this.mcpServer = createMCPServer(this.influxClient, this.priceTracker);
@@ -286,11 +361,24 @@ class PumpAgent {
     if (this.config.NODE_ENV !== 'production') {
       // In development, start MCP server directly
       await this.mcpServer.start();
-      logger.info('MCP server started');
+      log.info('MCP server started');
     } else {
       // In production, might want to fork or use a separate process
-      logger.info('MCP server configured (start separately in production)');
+      log.info('MCP server configured (start separately in production)');
     }
+  }
+
+
+
+  private validatePlatform(platformString: string): Platform | null {
+    // Map WebSocket platform strings to Platform enum
+    const platformMap: Record<string, Platform> = {
+      'pump': 'pump.fun',
+      'bonk': 'letsbonk.fun',
+      'bonkake': 'bonkake.fun'
+    };
+    
+    return platformMap[platformString] || null;
   }
 
   private startStatsLogger(): void {
@@ -301,7 +389,7 @@ class PumpAgent {
       const bufferSize = this.influxClient.getBufferSize();
       const subscribedTokens = this.pumpPortalClient.getSubscribedTokens();
       
-      logger.info('📈 System stats', {
+      log.info('📈 System stats', {
         pumpPortal: {
           connected: isConnected,
           subscribedTokensCount: subscribedTokens.length,
@@ -329,14 +417,14 @@ class PumpAgent {
         platformStats[platform] = (platformStats[platform] || 0) + 1;
       }
       
-      logger.info('🎯 Platform distribution', platformStats);
+      log.info('🎯 Platform distribution', platformStats);
     }, 60000); // Log every minute
   }
 
   public getTrackingStatus(): { 
     isConnected: boolean; 
     subscribedTokens: string[]; 
-    trackerStats: any;
+    trackerStats: TrackingStats | null;
     platformDistribution: Record<string, number>;
   } {
     const subscribedTokens = this.pumpPortalClient?.getSubscribedTokens() || [];
@@ -360,7 +448,7 @@ class PumpAgent {
   }
 
   public async stop(): Promise<void> {
-    logger.info('Stopping Pump Agent...');
+    log.info('Stopping Pump Agent...');
 
     // Stop PumpPortal client
     if (this.pumpPortalClient) {
@@ -382,33 +470,38 @@ class PumpAgent {
       await this.mcpServer.stop();
     }
 
+
+
     // Close database connection
     if (this.influxClient) {
       await this.influxClient.close();
     }
 
-    logger.info('Pump Agent stopped');
+    log.info('Pump Agent stopped');
   }
 }
 
 // Main entry point
 async function main() {
-  const agent = new PumpAgent();
+  console.log('Starting Pump Agent...');
   
   try {
+    const agent = new PumpAgent();
+    console.log('PumpAgent created successfully');
+    
     await agent.start();
+    console.log('PumpAgent started successfully');
   } catch (error) {
-    logger.error('Failed to start application', { error });
+    console.error('Failed to start application:', error);
+    log.error('Failed to start application', { error });
     process.exit(1);
   }
 }
 
 // Start the application
-if (require.main === module) {
-  main().catch((error) => {
-    console.error('Unhandled error:', error);
-    process.exit(1);
-  });
-}
+main().catch((error) => {
+  console.error('Unhandled error:', error);
+  process.exit(1);
+});
 
 export { PumpAgent };

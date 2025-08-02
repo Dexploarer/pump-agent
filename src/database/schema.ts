@@ -3,6 +3,7 @@
  */
 
 import { Platform } from '../utils/constants.js';
+import { PriceAlert } from '../data-collector/price-tracker.js';
 
 export interface TokenData {
   mint: string;
@@ -280,6 +281,80 @@ export interface CleanupMetrics {
   savedByLimit: number;
   executionTimeMs: number;
   memoryFreedBytes?: number;
+}
+
+// Event data types for proper event typing
+export interface AlertEventData {
+  alert: PriceAlert;
+  tokenData: TokenData;
+}
+
+export interface TrendEventData {
+  mint: string;
+  symbol: string;
+  platform: Platform;
+  trendType: 'bullish' | 'bearish' | 'sideways';
+  confidence: number;
+  timeframe: string;
+  data: {
+    startPrice: number;
+    endPrice: number;
+    changePercent: number;
+    volume: number;
+  };
+}
+
+export interface CleanupEventData {
+  mint: string;
+  symbol: string;
+  platform: Platform;
+  reason: 'rugged' | 'inactive' | 'low_volume' | 'emergency';
+  details: string;
+  finalMetrics: {
+    price: number;
+    volume: number;
+    liquidity: number;
+    trackedDuration: number;
+  };
+}
+
+// Emergency override config interface (mutable version of constants)
+export interface EmergencyOverrideConfig {
+  MAX_CLEANUP_PERCENTAGE: number;
+  CLEANUP_ENABLED: boolean;
+  FORCE_MINIMUM_TOKENS?: boolean;
+  BYPASS_SAFETY_CHECKS?: boolean;
+}
+
+// Solana transaction types for proper typing
+export interface SolanaInstruction {
+  programId: {
+    toString(): string;
+  };
+  accounts: unknown[];
+  data: unknown;
+}
+
+export interface SolanaTransactionMessage {
+  instructions: SolanaInstruction[];
+  recentBlockhash: string;
+  feePayer: unknown;
+}
+
+export interface SolanaTransaction {
+  transaction: {
+    message: SolanaTransactionMessage;
+  };
+  meta: unknown;
+}
+
+// InfluxDB query result types
+export interface InfluxQueryRow {
+  [key: string]: string | number | boolean | Date | null | undefined;
+}
+
+export interface InfluxQueryResult {
+  [Symbol.asyncIterator](): AsyncIterableIterator<InfluxQueryRow>;
 }
 
 // Query response types

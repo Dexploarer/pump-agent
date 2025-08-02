@@ -9,7 +9,8 @@ import {
   TokenData, 
   PricePoint, 
   AggregatedData,
-  PriceHistoryQuery 
+  PriceHistoryQuery,
+  EmergencyOverrideConfig 
 } from '../database/schema.js';
 import { Platform, TOKEN_CLEANUP_CONFIG } from '../utils/constants.js';
 import { CleanupEvent, CleanupMetrics } from '../database/schema.js';
@@ -64,7 +65,7 @@ interface CleanupTransaction {
   status: 'evaluating' | 'confirming' | 'executing' | 'completed' | 'failed';
 }
 
-interface TrackingStats {
+export interface TrackingStats {
   totalTokensTracked: number;
   pricePointsProcessed: number;
   alertsTriggered: number;
@@ -107,6 +108,7 @@ export class PriceTracker extends EventEmitter {
     forceMinimumTokens: false,
     emergencyWhitelist: new Set<string>(),
   };
+  private emergencyConfigOverride: EmergencyOverrideConfig | null = null;
   
   // Performance indices for faster cleanup
   private inactiveTokensIndex = new Set<string>();
@@ -224,10 +226,10 @@ export class PriceTracker extends EventEmitter {
 
     if (errors.length === 0 && warnings.length === 0) {
       logger.info('Configuration validation passed', {
-        cleanupEnabled: TOKEN_CLEANUP_CONFIG.CLEANUP_ENABLED,
+        cleanupEnabled: this.getEffectiveCleanupEnabled(),
         analysisInterval: this.analysisInterval,
         cleanupInterval: TOKEN_CLEANUP_CONFIG.CLEANUP_INTERVAL_MS,
-        maxCleanupPercentage: TOKEN_CLEANUP_CONFIG.MAX_CLEANUP_PERCENTAGE,
+        maxCleanupPercentage: this.getEffectiveMaxCleanupPercentage(),
         minTokensToKeep: TOKEN_CLEANUP_CONFIG.MIN_TOKENS_TO_KEEP,
       });
     }
@@ -964,15 +966,15 @@ export class PriceTracker extends EventEmitter {
       timestamp: new Date(),
     });
 
-    // Temporarily override cleanup settings
-    const originalPercentage = TOKEN_CLEANUP_CONFIG.MAX_CLEANUP_PERCENTAGE;
-    const originalEnabled = TOKEN_CLEANUP_CONFIG.CLEANUP_ENABLED;
+    // Set emergency config override (safer than modifying readonly constants)
+    this.emergencyConfigOverride = {
+      MAX_CLEANUP_PERCENTAGE: percentage,
+      CLEANUP_ENABLED: true,
+      BYPASS_SAFETY_CHECKS: true,
+      FORCE_MINIMUM_TOKENS: false,
+    };
     
     try {
-      // Force enable and set percentage
-      (TOKEN_CLEANUP_CONFIG as any).MAX_CLEANUP_PERCENTAGE = percentage;
-      (TOKEN_CLEANUP_CONFIG as any).CLEANUP_ENABLED = true;
-      
       // Force cleanup immediately
       await this.performCleanup();
       
@@ -984,9 +986,8 @@ export class PriceTracker extends EventEmitter {
       });
 
     } finally {
-      // Restore original settings
-      (TOKEN_CLEANUP_CONFIG as any).MAX_CLEANUP_PERCENTAGE = originalPercentage;
-      (TOKEN_CLEANUP_CONFIG as any).CLEANUP_ENABLED = originalEnabled;
+      // Clear emergency override
+      this.emergencyConfigOverride = null;
     }
 
     this.emit('emergencyCleanupCompleted', { 
@@ -1021,8 +1022,17 @@ export class PriceTracker extends EventEmitter {
     };
   }
 
+  // Helper methods for emergency config override
+  private getEffectiveCleanupEnabled(): boolean {
+    return this.emergencyConfigOverride?.CLEANUP_ENABLED ?? TOKEN_CLEANUP_CONFIG.CLEANUP_ENABLED;
+  }
+
+  private getEffectiveMaxCleanupPercentage(): number {
+    return this.emergencyConfigOverride?.MAX_CLEANUP_PERCENTAGE ?? TOKEN_CLEANUP_CONFIG.MAX_CLEANUP_PERCENTAGE;
+  }
+
   private startCleanupProcess(): void {
-    if (!TOKEN_CLEANUP_CONFIG.CLEANUP_ENABLED) {
+    if (!this.getEffectiveCleanupEnabled()) {
       logger.info('Token cleanup is disabled');
       return;
     }
@@ -1207,7 +1217,7 @@ export class PriceTracker extends EventEmitter {
     }).length;
 
     // Apply cleanup limit
-    const maxCleanup = Math.floor(this.trackedTokens.size * TOKEN_CLEANUP_CONFIG.MAX_CLEANUP_PERCENTAGE);
+    const maxCleanup = Math.floor(this.trackedTokens.size * this.getEffectiveMaxCleanupPercentage());
     const tokensToCleanup = candidates.slice(0, maxCleanup);
     metrics.savedByLimit = candidates.length - tokensToCleanup.length;
 

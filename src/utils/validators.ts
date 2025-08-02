@@ -43,10 +43,12 @@ const REQUIRED_ENV_VARS = [
 // ] as const;
 
 export function validateEnvironment(): ValidationResult {
+  console.log('Validating environment...');
   const errors: string[] = [];
   
   // Check required environment variables
   for (const envVar of REQUIRED_ENV_VARS) {
+    console.log(`Checking ${envVar}: ${process.env[envVar] ? 'FOUND' : 'MISSING'}`);
     if (!process.env[envVar]) {
       errors.push(`Missing required environment variable: ${envVar}`);
     }
@@ -82,9 +84,11 @@ export function validateEnvironment(): ValidationResult {
 }
 
 export function getEnvironmentConfig(): EnvironmentConfig {
+  console.log('Getting environment config...');
   const validation = validateEnvironment();
   
   if (!validation.isValid) {
+    console.error('Environment validation failed:', validation.errors);
     throw new Error(`Environment validation failed: ${validation.errors.join(', ')}`);
   }
 

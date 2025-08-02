@@ -323,38 +323,38 @@ export class QueryHandler {
         return await this.handleCurrentPrice(context);
       
       case 'price_history':
-        return await this.handlePriceHistory(context);
+        return this.handlePriceHistory(context);
       
       case 'price_change':
-        return await this.handlePriceChange(context);
+        return this.handlePriceChange(context);
       
       case 'volume_analysis':
-        return await this.handleVolumeAnalysis(context);
+        return this.handleVolumeAnalysis(context);
       
       case 'volume_trend':
-        return await this.handleVolumeTrend(context);
+        return this.handleVolumeTrend(context);
       
       case 'top_tokens':
-        return await this.handleTopTokens(context);
+        return this.handleTopTokens(context);
       
       case 'new_tokens':
-        return await this.handleNewTokens(context);
+        return this.handleNewTokens(context);
       
       case 'token_info':
-        return await this.handleTokenInfo(context);
+        return this.handleTokenInfo(context);
       
       case 'platform_analysis':
-        return await this.handlePlatformAnalysis(context);
+        return this.handlePlatformAnalysis(context);
       
       case 'trend_analysis':
-        return await this.handleTrendAnalysis(context);
+        return this.handleTrendAnalysis(context);
       
       case 'market_analysis':
-        return await this.handleMarketAnalysis(context);
+        return this.handleMarketAnalysis(context);
       
       case 'token_search':
       default:
-        return await this.handleTokenSearch(context);
+        return this.handleTokenSearch(context);
     }
   }
 
@@ -500,7 +500,7 @@ export class QueryHandler {
     };
   }
 
-  private async handleTrendAnalysis(context: QueryContext): Promise<QueryResult> {
+  private handleTrendAnalysis(context: QueryContext): QueryResult {
     // Get trends from price tracker
     const trends = this.priceTracker.getAllTrends();
     
@@ -562,31 +562,31 @@ export class QueryHandler {
   }
 
   // Placeholder implementations for remaining handlers
-  private async handlePriceChange(_context: QueryContext): Promise<QueryResult> {
+  private handlePriceChange(_context: QueryContext): QueryResult {
     return { success: true, data: [], message: 'Price change analysis not yet implemented', queryType: 'price_change', processingTime: 0, timestamp: new Date() };
   }
 
-  private async handleVolumeTrend(_context: QueryContext): Promise<QueryResult> {
+  private handleVolumeTrend(_context: QueryContext): QueryResult {
     return { success: true, data: [], message: 'Volume trend analysis not yet implemented', queryType: 'volume_trend', processingTime: 0, timestamp: new Date() };
   }
 
-  private async handleNewTokens(_context: QueryContext): Promise<QueryResult> {
+  private handleNewTokens(_context: QueryContext): QueryResult {
     return { success: true, data: [], message: 'New tokens query not yet implemented', queryType: 'new_tokens', processingTime: 0, timestamp: new Date() };
   }
 
-  private async handleTokenInfo(_context: QueryContext): Promise<QueryResult> {
+  private handleTokenInfo(_context: QueryContext): QueryResult {
     return { success: true, data: [], message: 'Token info query not yet implemented', queryType: 'token_info', processingTime: 0, timestamp: new Date() };
   }
 
-  private async handlePlatformAnalysis(_context: QueryContext): Promise<QueryResult> {
+  private handlePlatformAnalysis(_context: QueryContext): QueryResult {
     return { success: true, data: [], message: 'Platform analysis not yet implemented', queryType: 'platform_analysis', processingTime: 0, timestamp: new Date() };
   }
 
-  private async handleMarketAnalysis(_context: QueryContext): Promise<QueryResult> {
+  private handleMarketAnalysis(_context: QueryContext): QueryResult {
     return { success: true, data: [], message: 'Market analysis not yet implemented', queryType: 'market_analysis', processingTime: 0, timestamp: new Date() };
   }
 
-  private async handleTokenSearch(_context: QueryContext): Promise<QueryResult> {
+  private handleTokenSearch(_context: QueryContext): QueryResult {
     return { success: true, data: [], message: 'Token search not yet implemented', queryType: 'token_search', processingTime: 0, timestamp: new Date() };
   }
 }

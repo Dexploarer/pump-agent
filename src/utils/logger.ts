@@ -60,9 +60,11 @@ class Logger {
         console.warn(formattedLog);
         break;
       case LOG_LEVELS.INFO:
+        // eslint-disable-next-line no-console
         console.info(formattedLog);
         break;
       case LOG_LEVELS.DEBUG:
+        // eslint-disable-next-line no-console
         console.debug(formattedLog);
         break;
     }

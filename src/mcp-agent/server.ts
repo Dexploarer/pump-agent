@@ -32,11 +32,6 @@ export class MCPServer {
       {
         name: config.name,
         version: config.version,
-      },
-      {
-        capabilities: {
-          tools: {},
-        },
       }
     );
 
@@ -208,7 +203,7 @@ export class MCPServer {
     ];
 
     // Register list_tools handler
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    this.server.setRequestHandler(ListToolsRequestSchema, () => ({
       tools,
     }));
 
@@ -223,25 +218,25 @@ export class MCPServer {
         
         switch (name) {
           case 'query_token_data':
-            return await this.handleQueryTokenData(toolArgs);
+            return this.handleQueryTokenData(toolArgs);
 
           case 'get_token_price':
-            return await this.handleGetTokenPrice(toolArgs);
+            return this.handleGetTokenPrice(toolArgs);
 
           case 'get_price_history':
-            return await this.handleGetPriceHistory(toolArgs);
+            return this.handleGetPriceHistory(toolArgs);
 
           case 'get_volume_analysis':
-            return await this.handleGetVolumeAnalysis(toolArgs);
+            return this.handleGetVolumeAnalysis(toolArgs);
 
           case 'get_trending_tokens':
-            return await this.handleGetTrendingTokens(toolArgs);
+            return this.handleGetTrendingTokens(toolArgs);
 
           case 'add_price_alert':
-            return await this.handleAddPriceAlert(toolArgs);
+            return this.handleAddPriceAlert(toolArgs);
 
           case 'get_server_stats':
-            return await this.handleGetServerStats(toolArgs);
+            return this.handleGetServerStats(toolArgs);
 
           default:
             throw new Error(`Unknown tool: ${name}`);
@@ -271,17 +266,30 @@ export class MCPServer {
       });
     };
 
-    process.on('SIGINT', async () => {
-      logger.info('Received SIGINT, shutting down MCP server');
-      await this.stop();
-      process.exit(0);
+    process.on('SIGINT', () => {
+      void (async () => {
+        logger.info('Received SIGINT, shutting down MCP server');
+        await this.stop();
+        process.exit(0);
+      })();
     });
 
-    process.on('SIGTERM', async () => {
-      logger.info('Received SIGTERM, shutting down MCP server');
-      await this.stop();
-      process.exit(0);
+    process.on('SIGTERM', () => {
+      void (async () => {
+        logger.info('Received SIGTERM, shutting down MCP server');
+        await this.stop();
+        process.exit(0);
+      })();
     });
+  }
+
+  // Helper function for safe string conversion in template literals
+  private toSafeString(value: unknown): string {
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number') return value.toString();
+    if (typeof value === 'boolean') return value.toString();
+    if (value === null || value === undefined) return '';
+    return JSON.stringify(value);
   }
 
   // Tool handlers
@@ -313,8 +321,8 @@ export class MCPServer {
 
     // Build natural language query
     const query = symbol 
-      ? `What is the current price of ${symbol}?`
-      : `What is the current price of token with mint ${mint}?`;
+      ? `What is the current price of ${this.toSafeString(symbol)}?`
+      : `What is the current price of token with mint ${this.toSafeString(mint)}?`;
 
     const result = await this.queryHandler.handleQuery(query);
 
@@ -336,8 +344,8 @@ export class MCPServer {
     }
 
     const query = symbol
-      ? `Show me ${timeframe} price history for ${symbol} with ${interval} intervals`
-      : `Show me ${timeframe} price history for token ${mint} with ${interval} intervals`;
+      ? `Show me ${this.toSafeString(timeframe)} price history for ${this.toSafeString(symbol)} with ${this.toSafeString(interval)} intervals`
+      : `Show me ${this.toSafeString(timeframe)} price history for token ${this.toSafeString(mint)} with ${this.toSafeString(interval)} intervals`;
 
     const result = await this.queryHandler.handleQuery(query);
 
@@ -354,9 +362,9 @@ export class MCPServer {
   private async handleGetVolumeAnalysis(args: Record<string, unknown>) {
     const { platform, timeframe = '24h', groupBy = 'hour' } = args;
 
-    let query = `Analyze trading volume over ${timeframe} grouped by ${groupBy}`;
+    let query = `Analyze trading volume over ${this.toSafeString(timeframe)} grouped by ${this.toSafeString(groupBy)}`;
     if (platform) {
-      query += ` for ${platform}`;
+      query += ` for ${this.toSafeString(platform)}`;
     }
 
     const result = await this.queryHandler.handleQuery(query);
@@ -374,9 +382,9 @@ export class MCPServer {
   private async handleGetTrendingTokens(args: Record<string, unknown>) {
     const { platform, timeframe = '24h', direction = 'both', limit = 10 } = args;
 
-    let query = `Show me top ${limit} trending tokens with ${direction} trends over ${timeframe}`;
+    let query = `Show me top ${this.toSafeString(limit)} trending tokens with ${this.toSafeString(direction)} trends over ${this.toSafeString(timeframe)}`;
     if (platform) {
-      query += ` on ${platform}`;
+      query += ` on ${this.toSafeString(platform)}`;
     }
 
     const result = await this.queryHandler.handleQuery(query);
@@ -414,7 +422,7 @@ export class MCPServer {
           text: JSON.stringify({
             success: true,
             alertId,
-            message: `Price alert created for ${symbol}`,
+            message: `Price alert created for ${this.toSafeString(symbol)}`,
           }, null, 2),
         },
       ],
